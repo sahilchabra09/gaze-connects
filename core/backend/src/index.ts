@@ -51,6 +51,8 @@ const gazeWebSocketDocs = {
 }
 
 const authOpenApiSchema = normalizeAuthOpenApiSchema(await auth.api.generateOpenAPISchema())
+const host = process.env.HOST ?? "0.0.0.0"
+const port = Number(process.env.PORT ?? 3000)
 
 const app = new Elysia()
   .onAfterHandle(({ request, response, set }) => {
@@ -119,7 +121,10 @@ const app = new Elysia()
       .use(gazeTestRoutes)
       .use(gazeRoutes),
   )
-  .listen(3000)
+  .listen({
+    hostname: host,
+    port,
+  })
 
 process.on("SIGINT", () => {
   gazeMqttBridge.close()
@@ -132,10 +137,10 @@ process.on("SIGTERM", () => {
 })
 
 console.log(`
-GazeCore backend is running at http://localhost:3000
-Better Auth: http://localhost:3000/api/auth
-Health Check: http://localhost:3000/health
-Swagger: http://localhost:3000/swagger
-Gaze Routes: http://localhost:3000/api/gaze
-Live Gaze WS: ws://localhost:3000/api/gaze/screen/ws
+GazeCore backend is running at http://${host}:${port}
+Better Auth: http://${host}:${port}/api/auth
+Health Check: http://${host}:${port}/health
+Swagger: http://${host}:${port}/swagger
+Gaze Routes: http://${host}:${port}/api/gaze
+Live Gaze WS: ws://${host}:${port}/api/gaze/screen/ws
 `)
