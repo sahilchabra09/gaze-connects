@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
+  BadgeCheck,
   ArrowLeft,
   ArrowRight,
   Circle,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { useMockMode } from "@/hooks/use-mock-mode";
+import { useSession } from "@/lib/auth-client";
 import type { GridCard, GridIcon } from "@/lib/mode-navigation";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +53,7 @@ function getIcon(icon: GridIcon) {
 
 export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) {
   const { mockEnabled, toggleMockMode } = useMockMode(true);
+  const { data: session } = useSession();
   const hasHeader = Boolean(title || subtitle);
   const [cursorPosition, setCursorPosition] = useState({ x: -100, y: -100 });
 
@@ -137,6 +140,14 @@ export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) 
             className="inline-flex items-center rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-2 text-sm font-semibold text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-800"
           >
             Setup
+          </Link>
+
+          <Link
+            href="/auth"
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-2 text-sm font-semibold text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-800"
+          >
+            <BadgeCheck className="size-4" />
+            {session?.user?.name || "Auth"}
           </Link>
 
           <button

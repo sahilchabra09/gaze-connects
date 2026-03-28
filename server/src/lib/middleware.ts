@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { sql } from "drizzle-orm";
-import { auth } from "./auth";
+import { auth, trustedOrigins } from "./auth";
 import { AUTH_MESSAGES } from "./auth-messages";
 import { validateEmailDomain } from "./email-validator";
 import { db } from "@/db";
@@ -92,7 +92,7 @@ export const createAuthPlugin = () =>
   new Elysia({ name: "better-auth-plugin" })
     .use(
       cors({
-        origin: process.env.FRONTEND_URL || "http://localhost:5173",
+        origin: trustedOrigins,
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
