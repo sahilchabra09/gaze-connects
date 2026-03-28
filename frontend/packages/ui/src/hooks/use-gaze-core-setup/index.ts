@@ -86,6 +86,19 @@ function isSnapshotTimeout(status: number, message: string) {
   return status === 504 || /\btime(?:d)?\s*out\b/i.test(message)
 }
 
+function getCurrentViewportSize() {
+  const width = Math.max(
+    1,
+    Math.round(window.visualViewport?.width ?? window.innerWidth ?? document.documentElement.clientWidth ?? 1),
+  )
+  const height = Math.max(
+    1,
+    Math.round(window.visualViewport?.height ?? window.innerHeight ?? document.documentElement.clientHeight ?? 1),
+  )
+
+  return { width, height }
+}
+
 export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
   const savedPrefs = testEyeTrackerStorage.readPrefs()
   const savedCalibrationRecord = testEyeTrackerStorage.readCalibrationRecord()
@@ -147,6 +160,8 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
   const captureProgressRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const livePreviewSocketRef = useRef<WebSocket | null>(null)
   const livePreviewActiveRef = useRef(false)
+  const livePreviewSendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const latestLivePreviewResultRef = useRef<GazeVectorReturn | null>(null)
   const calibrationRecordRef = useRef<TestCalibrationRecord | null>(savedCalibrationRecord)
   const calibrationViewportRef = useRef(calibrationViewport)
   const pendingFinalGyroSnapshotRef = useRef<Promise<PreparedGyroSnapshot> | null>(null)
@@ -219,6 +234,27 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
   }, [])
 
   useEffect(() => {
+    if (livePreviewSendIntervalRef.current) {
+      clearInterval(livePreviewSendIntervalRef.current)
+      livePreviewSendIntervalRef.current = null
+    }
+
+    if (!livePreviewActive) return
+
+    livePreviewSendIntervalRef.current = setInterval(() => {
+      sendLivePreviewGaze()
+    }, 50)
+
+    return () => {
+      if (livePreviewSendIntervalRef.current) {
+        clearInterval(livePreviewSendIntervalRef.current)
+        livePreviewSendIntervalRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePreviewActive])
+
+  useEffect(() => {
     if (!calibrating) return
 
     function onKeyDown(event: KeyboardEvent) {
@@ -235,6 +271,36 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
     return () => window.removeEventListener("keydown", onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calibrating, calibIndex, captureActive])
+
+  useEffect(() => {
+    if (!calibrating) return
+
+    const syncCalibrationViewport = () => {
+      const viewport = getCurrentViewportSize()
+      const previous = calibrationViewportRef.current
+      if (viewport.width === previous.width && viewport.height === previous.height) return
+
+      const grid = buildCalibrationGrid(viewport.width, viewport.height)
+      calibrationViewportRef.current = viewport
+      calibrationGridRef.current = grid
+      setCalibrationViewport(viewport)
+      setCalibrationGrid(grid)
+    }
+
+    syncCalibrationViewport()
+
+    window.addEventListener("resize", syncCalibrationViewport)
+    window.addEventListener("orientationchange", syncCalibrationViewport)
+    document.addEventListener("fullscreenchange", syncCalibrationViewport)
+    window.visualViewport?.addEventListener("resize", syncCalibrationViewport)
+
+    return () => {
+      window.removeEventListener("resize", syncCalibrationViewport)
+      window.removeEventListener("orientationchange", syncCalibrationViewport)
+      document.removeEventListener("fullscreenchange", syncCalibrationViewport)
+      window.visualViewport?.removeEventListener("resize", syncCalibrationViewport)
+    }
+  }, [calibrating])
 
   function buildCalibrationRecord(
     calibration: TestCalibrationData,
@@ -438,8 +504,9 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
     return { x: xRaw, y: yRaw, timestamp: Date.now() }
   }
 
-  function sendLivePreviewGaze(result: GazeVectorReturn) {
+  function sendLivePreviewGaze(result: GazeVectorReturn | null = latestLivePreviewResultRef.current) {
     if (!livePreviewActiveRef.current) return
+    if (!result) return
     const socket = livePreviewSocketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
     if (!calibrationRecordRef.current?.calibration) return
@@ -453,8 +520,13 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
   }
 
   function stopLivePreview() {
+    if (livePreviewSendIntervalRef.current) {
+      clearInterval(livePreviewSendIntervalRef.current)
+      livePreviewSendIntervalRef.current = null
+    }
     closeLivePreviewSocket()
     livePreviewActiveRef.current = false
+    latestLivePreviewResultRef.current = null
     setLivePreviewActive(false)
     setLivePreviewStatus("idle")
     setLivePreviewError("")
@@ -670,6 +742,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
           roi: result.roi,
           frameSize: null,
         }
+        latestLivePreviewResultRef.current = result
         setLatestResult(result)
         options.onLiveResult?.(result)
         sendLivePreviewGaze(result)
@@ -696,6 +769,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
     renderRafRef.current = 0
     sessionRef.current?.stop()
     sessionRef.current = null
+    latestLivePreviewResultRef.current = null
     setPreviewActive(false)
   }
 
@@ -865,7 +939,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
 
     setCalibrationStatusText("")
     fullscreenOwnedRef.current = await requestFullscreenSafely()
-    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    const viewport = getCurrentViewportSize()
     const grid = buildCalibrationGrid(viewport.width, viewport.height)
     calibrationViewportRef.current = viewport
     setCalibrationViewport(viewport)

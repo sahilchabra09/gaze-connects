@@ -309,7 +309,7 @@ export default function SetupPage() {
 
 	return (
 		<main className="min-h-screen bg-black px-4 py-6 text-zinc-100 md:px-8 md:py-8">
-			<div className="mx-auto w-full max-w-6xl">
+			<div className="mx-auto w-full ">
 				<header className="mb-6 flex flex-wrap items-center justify-between gap-3">
 					<h1 className="text-4xl font-semibold tracking-tight text-zinc-100">GazeConnect Setup</h1>
 					<Link
