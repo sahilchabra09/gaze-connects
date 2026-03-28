@@ -51,9 +51,22 @@ export function CalibrationOverlay({ state }: { state: GazeCoreWidgetState }) {
         }}
       />
 
-      <Button className="absolute right-4 top-4" variant="secondary" onClick={state.stopCalibration}>
-        Cancel calibration
-      </Button>
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.localStorage.setItem("gaze-connect-mock-mode", "false")
+              window.location.assign("/")
+            }
+          }}
+        >
+          Home
+        </Button>
+        <Button variant="secondary" onClick={state.stopCalibration}>
+          Cancel calibration
+        </Button>
+      </div>
     </div>,
     document.body,
   )

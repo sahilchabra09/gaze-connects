@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
 import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
 
@@ -47,6 +48,7 @@ function resolveGazeConnectBackendUrl() {
 }
 
 export default function SetupPage() {
+	const searchParams = useSearchParams();
 	const [activeTab, setActiveTab] = useState<SetupTab>("patient");
 	const { data: session, isPending: sessionPending } = useSession();
 	const gazeConnectBackendUrl = resolveGazeConnectBackendUrl();
@@ -58,6 +60,13 @@ export default function SetupPage() {
 	const [hardwareSaving, setHardwareSaving] = useState(false);
 	const [hardwareError, setHardwareError] = useState("");
 	const [hardwareMessage, setHardwareMessage] = useState("");
+
+	useEffect(() => {
+		const tabParam = searchParams.get("tab")?.trim().toLowerCase();
+		if (tabParam === "calibration") {
+			setActiveTab("calibration");
+		}
+	}, [searchParams]);
 
 	useEffect(() => {
 		if (activeTab !== "hardware" || hardwareStatusLoaded) {
