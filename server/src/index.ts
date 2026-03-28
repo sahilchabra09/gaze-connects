@@ -2,12 +2,16 @@ import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
 import { logger } from "./lib/logger";
+import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+import { telegramClientManager } from "./telegram/tdlib";
 
 /**
  * GazeCore Backend - Main Server
  * Route-first architecture
  */
+await telegramClientManager.initialize();
+
 const app = new Elysia()
   .use(
     swagger({
@@ -55,6 +59,7 @@ const app = new Elysia()
     app
       // Better Auth endpoints are mounted by middleware at /api/auth/*
       // User routes: /api/users/me, /api/users/:id
+      .use(telegramRoutes)
       .use(userRoutes)
   )
   .listen(8000);

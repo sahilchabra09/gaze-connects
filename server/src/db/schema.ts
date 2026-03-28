@@ -1,5 +1,13 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -73,9 +81,61 @@ export const verification = pgTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const userRelations = relations(user, ({ many }) => ({
+export const patientTelegramSession = pgTable("patient_telegram_session", {
+  patientId: text("patient_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  telegramUserId: text("telegram_user_id"),
+  sessionPath: text("session_path").notNull(),
+  authState: text("auth_state").notNull(),
+  connectedAt: timestamp("connected_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+export const patientContact = pgTable(
+  "patient_contact",
+  {
+    id: text("id").primaryKey(),
+    patientId: text("patient_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    priorityRank: integer("priority_rank").notNull(),
+    name: text("name").notNull(),
+    relation: text("relation").notNull(),
+    phoneNumber: text("phone_number").notNull(),
+    phoneNumberNormalized: text("phone_number_normalized").notNull(),
+    telegramUserId: text("telegram_user_id"),
+    telegramChatId: text("telegram_chat_id"),
+    isActive: boolean("is_active").default(true).notNull(),
+    notes: text("notes"),
+    lastResolvedAt: timestamp("last_resolved_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("patient_contact_patient_phone_unique").on(table.patientId, table.phoneNumberNormalized),
+    index("patient_contact_patient_role_rank_idx").on(table.patientId, table.role, table.priorityRank),
+    index("patient_contact_patient_telegram_user_idx").on(table.patientId, table.telegramUserId),
+    index("patient_contact_patient_telegram_chat_idx").on(table.patientId, table.telegramChatId),
+  ],
+);
+
+export const userRelations = relations(user, ({ many, one }) => ({
   sessions: many(session),
   accounts: many(account),
+  patientContacts: many(patientContact),
+  patientTelegramSession: one(patientTelegramSession, {
+    fields: [user.id],
+    references: [patientTelegramSession.patientId],
+  }),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -88,6 +148,20 @@ export const sessionRelations = relations(session, ({ one }) => ({
 export const accountRelations = relations(account, ({ one }) => ({
   user: one(user, {
     fields: [account.userId],
+    references: [user.id],
+  }),
+}));
+
+export const patientTelegramSessionRelations = relations(patientTelegramSession, ({ one }) => ({
+  patient: one(user, {
+    fields: [patientTelegramSession.patientId],
+    references: [user.id],
+  }),
+}));
+
+export const patientContactRelations = relations(patientContact, ({ one }) => ({
+  patient: one(user, {
+    fields: [patientContact.patientId],
     references: [user.id],
   }),
 }));
