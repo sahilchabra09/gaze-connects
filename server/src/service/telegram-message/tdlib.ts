@@ -63,6 +63,20 @@ function toIdString(value: string | number | bigint | null | undefined): string 
   return String(value);
 }
 
+function toTdlibId(value: string, kind: "chat" | "user"): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new TelegramDomainError(
+      "TELEGRAM_ID_INVALID",
+      409,
+      `Stored Telegram ${kind} id is invalid. Reconnect Telegram and try again`,
+    );
+  }
+
+  return parsed;
+}
+
 function toIsoFromUnix(value: number | null | undefined): string | null {
   if (!value) {
     return null;
@@ -336,7 +350,8 @@ export class TelegramClientManager {
     } catch (error) {
       const mappedError = mapTdlibAuthError(error);
       if (mappedError?.code === "TELEGRAM_INITIALIZING") {
-        const hasKeyMismatch = this.keyMismatchPatients.has(patientId);
+        const hasKeyMismatch =
+          this.keyMismatchPatients.has(patientId) || (await this.waitForKeyMismatchSignal(patientId));
 
         logger.warn(
           {
@@ -363,6 +378,64 @@ export class TelegramClientManager {
           } as any);
         } catch (retryError) {
           const retryMappedError = mapTdlibAuthError(retryError);
+          const retryHasKeyMismatch =
+            this.keyMismatchPatients.has(patientId) ||
+            isTdlibWrongDatabaseEncryptionKey(retryError) ||
+            (retryMappedError?.code === "TELEGRAM_ENCRYPTION_KEY_MISMATCH") ||
+            (retryMappedError?.code === "TELEGRAM_INITIALIZING" &&
+              (await this.waitForKeyMismatchSignal(patientId)));
+
+          if (retryHasKeyMismatch) {
+            logger.warn(
+              {
+                operation: "telegram.start-auth",
+                patientId,
+                sessionPath: recreatedRuntime.sessionPath,
+              },
+              "detected delayed encryption-key mismatch while retrying start-auth; resetting session storage and retrying",
+            );
+
+            await this.resetSessionStorage(patientId);
+            const resetRuntime = await this.ensureRuntime(patientId, { forceRecreate: true });
+
+            try {
+              await resetRuntime.client.invoke({
+                _: "setAuthenticationPhoneNumber",
+                phone_number: normalizedPhoneNumber,
+              } as any);
+            } catch (resetRetryError) {
+              const resetRetryMappedError = mapTdlibAuthError(resetRetryError);
+              if (resetRetryMappedError) {
+                throw resetRetryMappedError;
+              }
+
+              logger.error(
+                {
+                  operation: "telegram.start-auth",
+                  patientId,
+                  sessionPath: resetRuntime.sessionPath,
+                  authStateBefore: resetRuntime.authState,
+                  phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
+                  error: serializeError(resetRetryError),
+                },
+                "setAuthenticationPhoneNumber failed after storage reset and runtime recreation",
+              );
+              throw resetRetryError;
+            }
+
+            const status = await this.refreshRuntimeState(patientId);
+            logger.info(
+              {
+                operation: "telegram.start-auth",
+                patientId,
+                sessionPath: status.sessionPath,
+                authStateAfter: status.authState,
+              },
+              "telegram phone authentication request accepted after encryption-key mismatch reset",
+            );
+            return status;
+          }
+
           if (retryMappedError) {
             throw retryMappedError;
           }
@@ -399,6 +472,7 @@ export class TelegramClientManager {
     }
 
     const status = await this.refreshRuntimeState(patientId);
+    this.keyMismatchPatients.delete(patientId);
     logger.info(
       {
         operation: "telegram.start-auth",
@@ -451,6 +525,7 @@ export class TelegramClientManager {
     }
 
     const status = await this.refreshRuntimeState(patientId);
+    this.keyMismatchPatients.delete(patientId);
     if (status.authState === "waiting_password") {
       throw new TelegramDomainError(
         "TELEGRAM_2FA_UNSUPPORTED",
@@ -499,8 +574,31 @@ export class TelegramClientManager {
       contact = await this.resolveContactChat(runtime, contact);
     }
 
-    const chat = await this.fetchChatSummary(runtime, contact, contact.telegramChatId!);
-    const messages = await this.getMessages(patientId, contact.telegramChatId!, 100);
+    let chat: ChatSummary;
+    let messages: ChatMessage[];
+
+    try {
+      chat = await this.fetchChatSummary(runtime, contact, contact.telegramChatId!);
+      messages = await this.getMessages(patientId, contact.telegramChatId!, 100);
+    } catch (error) {
+      if (!isTdlibNotFound(error)) {
+        throw error;
+      }
+
+      logger.warn(
+        {
+          patientId,
+          contactId: contact.id,
+          chatId: contact.telegramChatId,
+          error: serializeError(error),
+        },
+        "stored telegram chat id not found; resolving a fresh chat mapping",
+      );
+
+      contact = await this.resolveContactChat(runtime, contact);
+      chat = await this.fetchChatSummary(runtime, contact, contact.telegramChatId!);
+      messages = await this.getMessages(patientId, contact.telegramChatId!, 100);
+    }
 
     telegramSseBroker.publish(patientId, "chat_opened", {
       contact,
@@ -518,10 +616,11 @@ export class TelegramClientManager {
   ): Promise<ChatMessage[]> {
     const runtime = await this.ensureAuthenticatedRuntime(patientId);
     await contactService.getActiveByChatId(patientId, chatId);
+    const tdlibChatId = toTdlibId(chatId, "chat");
 
     const history = (await runtime.client.invoke({
       _: "getChatHistory",
-      chat_id: chatId,
+      chat_id: tdlibChatId,
       from_message_id: fromMessageId ?? 0,
       offset: 0,
       limit,
@@ -539,10 +638,11 @@ export class TelegramClientManager {
   ): Promise<ChatMessage> {
     const runtime = await this.ensureAuthenticatedRuntime(patientId);
     const contact = await contactService.getActiveByChatId(patientId, chatId);
+    const tdlibChatId = toTdlibId(chatId, "chat");
 
     const sent = (await runtime.client.invoke({
       _: "sendMessage",
-      chat_id: chatId,
+      chat_id: tdlibChatId,
       input_message_content: {
         _: "inputMessageText",
         text: {
@@ -674,7 +774,6 @@ export class TelegramClientManager {
 
         await this.persistRuntime(runtime);
         await this.refreshRuntimeState(patientId);
-        this.keyMismatchPatients.delete(patientId);
         return runtime;
       } catch (error) {
         await this.disposeRuntime(patientId);
@@ -714,6 +813,23 @@ export class TelegramClientManager {
     this.keyMismatchPatients.delete(patientId);
 
     logger.warn({ patientId, sessionPath }, "cleared telegram session storage due to encryption key mismatch");
+  }
+
+  private async waitForKeyMismatchSignal(patientId: string, timeoutMs = 500): Promise<boolean> {
+    if (this.keyMismatchPatients.has(patientId)) {
+      return true;
+    }
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      if (this.keyMismatchPatients.has(patientId)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private async ensureAuthenticatedRuntime(patientId: string): Promise<PatientRuntime> {
@@ -819,7 +935,37 @@ export class TelegramClientManager {
     const [firstName, ...rest] = contact.name.split(/\s+/);
     const lastName = rest.join(" ");
 
-    let telegramUserId: string | null = null;
+    let telegramUserId: string | null = contact.telegramUserId;
+
+    if (telegramUserId) {
+      try {
+        const chat = (await runtime.client.invoke({
+          _: "createPrivateChat",
+          user_id: toTdlibId(telegramUserId, "user"),
+          force: false,
+        } as any)) as TdChat;
+
+        return contactService.linkTelegramIdentity(runtime.patientId, contact.id, {
+          telegramUserId,
+          telegramChatId: String(chat.id),
+        });
+      } catch (error) {
+        if (!isTdlibNotFound(error)) {
+          throw error;
+        }
+
+        logger.warn(
+          {
+            patientId: runtime.patientId,
+            contactId: contact.id,
+            telegramUserId,
+            error: serializeError(error),
+          },
+          "stored telegram user id could not open private chat; re-resolving via phone lookup",
+        );
+        telegramUserId = null;
+      }
+    }
 
     try {
       const imported = (await runtime.client.invoke({
@@ -863,11 +1009,20 @@ export class TelegramClientManager {
       throw new TelegramDomainError("CONTACT_NOT_ON_TELEGRAM", 404, "Saved contact is not available on Telegram");
     }
 
-    const chat = (await runtime.client.invoke({
-      _: "createPrivateChat",
-      user_id: telegramUserId,
-      force: false,
-    } as any)) as TdChat;
+    let chat: TdChat;
+    try {
+      chat = (await runtime.client.invoke({
+        _: "createPrivateChat",
+        user_id: toTdlibId(telegramUserId, "user"),
+        force: false,
+      } as any)) as TdChat;
+    } catch (error) {
+      if (isTdlibNotFound(error)) {
+        throw new TelegramDomainError("CONTACT_NOT_ON_TELEGRAM", 404, "Saved contact is not available on Telegram");
+      }
+
+      throw error;
+    }
 
     return contactService.linkTelegramIdentity(runtime.patientId, contact.id, {
       telegramUserId,
@@ -880,9 +1035,11 @@ export class TelegramClientManager {
     contact: PatientContactRecord,
     chatId: string,
   ): Promise<ChatSummary> {
+    const tdlibChatId = toTdlibId(chatId, "chat");
+
     const chat = (await runtime.client.invoke({
       _: "getChat",
-      chat_id: chatId,
+      chat_id: tdlibChatId,
     } as any)) as TdChat;
 
     return toChatSummary(chat, contact);
