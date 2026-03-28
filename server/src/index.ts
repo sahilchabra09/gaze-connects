@@ -5,7 +5,6 @@ import { logger } from "./lib/logger";
 import { gazeRoutes } from "./routes/gaze";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
-import { telegramClientManager } from "./service/telegram-message/tdlib";
 
 /**
  * GazeCore Backend - Main Server
@@ -72,9 +71,3 @@ logger.info(
   },
   "GazeConnect server started"
 )
-
-void telegramClientManager.initialize().then(() => {
-  logger.info("telegram client manager initialized")
-}).catch((error) => {
-  logger.error({ error }, "telegram client manager failed to initialize")
-})

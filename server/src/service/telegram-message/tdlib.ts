@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { getTdjson } from "prebuilt-tdlib";
@@ -167,6 +167,51 @@ function isTdlibNotFound(error: unknown): boolean {
   return code === 404 || message.includes("404") || message.includes("not found");
 }
 
+function isTdlibWrongDatabaseEncryptionKey(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return message.includes("Wrong database encryption key");
+}
+
+function mapTdlibAuthError(error: unknown): TelegramDomainError | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const rawCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+  const code = typeof rawCode === "number" ? rawCode : Number(rawCode);
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+
+  if (message.includes("PHONE_CODE_INVALID")) {
+    return new TelegramDomainError("TELEGRAM_CODE_INVALID", 400, "Invalid Telegram verification code");
+  }
+
+  if (message.includes("PHONE_CODE_EXPIRED")) {
+    return new TelegramDomainError("TELEGRAM_CODE_EXPIRED", 400, "Telegram verification code has expired");
+  }
+
+  if (message.includes("PHONE_NUMBER_INVALID")) {
+    return new TelegramDomainError("TELEGRAM_PHONE_INVALID", 400, "Telegram phone number is invalid");
+  }
+
+  if (message.includes("PHONE_NUMBER_FLOOD") || message.includes("FLOOD_WAIT") || code === 429) {
+    return new TelegramDomainError("TELEGRAM_RATE_LIMIT", 429, "Too many Telegram attempts. Please try again later");
+  }
+
+  if (message.includes("Initialization parameters are needed")) {
+    return new TelegramDomainError("TELEGRAM_INITIALIZING", 503, "Telegram session is still initializing. Please retry in a moment");
+  }
+
+  if (message.includes("Wrong database encryption key")) {
+    return new TelegramDomainError("TELEGRAM_ENCRYPTION_KEY_MISMATCH", 409, "Telegram session data was encrypted with a different key. Reset the Telegram session and authenticate again");
+  }
+
+  return null;
+}
+
 function mapAuthorizationState(state: TdObject): TelegramAuthState {
   switch (state._) {
     case "authorizationStateWaitPhoneNumber":
@@ -187,6 +232,9 @@ function mapAuthorizationState(state: TdObject): TelegramAuthState {
 
 export class TelegramClientManager {
   private readonly runtimes = new Map<string, PatientRuntime>();
+  private readonly runtimeInitializations = new Map<string, Promise<PatientRuntime>>();
+  private readonly runtimeWarmups = new Map<string, Promise<void>>();
+  private readonly keyMismatchPatients = new Set<string>();
   private initialization: Promise<void> | null = null;
 
   async initialize(): Promise<void> {
@@ -234,6 +282,37 @@ export class TelegramClientManager {
     };
   }
 
+  async warmUpForUser(patientId: string): Promise<void> {
+    if (this.runtimes.has(patientId) && !this.runtimeInitializations.has(patientId)) {
+      return;
+    }
+
+    const inProgress = this.runtimeWarmups.get(patientId);
+    if (inProgress) {
+      return inProgress;
+    }
+
+    const warmup = this.ensureRuntime(patientId)
+      .then(() => {
+        logger.info({ patientId }, "telegram runtime warmed up for signed-in user");
+      })
+      .catch((error) => {
+        logger.warn(
+          {
+            patientId,
+            error: serializeError(error),
+          },
+          "telegram runtime warm-up failed",
+        );
+      })
+      .finally(() => {
+        this.runtimeWarmups.delete(patientId);
+      });
+
+    this.runtimeWarmups.set(patientId, warmup);
+    return warmup;
+  }
+
   async startAuthentication(patientId: string, phoneNumber: string): Promise<TelegramRuntimeStatus> {
     const runtime = await this.ensureRuntime(patientId);
     const normalizedPhoneNumber = toTelegramPhoneNumber(phoneNumber);
@@ -255,18 +334,68 @@ export class TelegramClientManager {
         phone_number: normalizedPhoneNumber,
       } as any);
     } catch (error) {
-      logger.error(
-        {
-          operation: "telegram.start-auth",
-          patientId,
-          sessionPath: runtime.sessionPath,
-          authStateBefore: runtime.authState,
-          phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
-          error: serializeError(error),
-        },
-        "setAuthenticationPhoneNumber failed",
-      );
-      throw error;
+      const mappedError = mapTdlibAuthError(error);
+      if (mappedError?.code === "TELEGRAM_INITIALIZING") {
+        const hasKeyMismatch = this.keyMismatchPatients.has(patientId);
+
+        logger.warn(
+          {
+            operation: "telegram.start-auth",
+            patientId,
+            sessionPath: runtime.sessionPath,
+            hasKeyMismatch,
+          },
+          hasKeyMismatch
+            ? "telegram runtime has encryption-key mismatch; clearing session storage and recreating runtime"
+            : "telegram runtime stuck initializing; recreating runtime and retrying start-auth",
+        );
+
+        if (hasKeyMismatch) {
+          await this.resetSessionStorage(patientId);
+        }
+
+        const recreatedRuntime = await this.ensureRuntime(patientId, { forceRecreate: true });
+
+        try {
+          await recreatedRuntime.client.invoke({
+            _: "setAuthenticationPhoneNumber",
+            phone_number: normalizedPhoneNumber,
+          } as any);
+        } catch (retryError) {
+          const retryMappedError = mapTdlibAuthError(retryError);
+          if (retryMappedError) {
+            throw retryMappedError;
+          }
+
+          logger.error(
+            {
+              operation: "telegram.start-auth",
+              patientId,
+              sessionPath: recreatedRuntime.sessionPath,
+              authStateBefore: recreatedRuntime.authState,
+              phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
+              error: serializeError(retryError),
+            },
+            "setAuthenticationPhoneNumber failed after runtime recreation",
+          );
+          throw retryError;
+        }
+      } else if (mappedError) {
+        throw mappedError;
+      } else {
+        logger.error(
+          {
+            operation: "telegram.start-auth",
+            patientId,
+            sessionPath: runtime.sessionPath,
+            authStateBefore: runtime.authState,
+            phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
+            error: serializeError(error),
+          },
+          "setAuthenticationPhoneNumber failed",
+        );
+        throw error;
+      }
     }
 
     const status = await this.refreshRuntimeState(patientId);
@@ -302,6 +431,11 @@ export class TelegramClientManager {
         code,
       } as any);
     } catch (error) {
+      const mappedError = mapTdlibAuthError(error);
+      if (mappedError) {
+        throw mappedError;
+      }
+
       logger.error(
         {
           operation: "telegram.verify-code",
@@ -458,67 +592,128 @@ export class TelegramClientManager {
       await this.initialize();
     }
 
+    const inProgress = this.runtimeInitializations.get(patientId);
+    if (inProgress) {
+      if (options?.forceRecreate) {
+        try {
+          await inProgress;
+        } catch {
+          // Ignore and continue with recreation below.
+        }
+      } else {
+        return inProgress;
+      }
+    }
+
+    if (options?.forceRecreate) {
+      await this.disposeRuntime(patientId);
+    }
+
     const existing = this.runtimes.get(patientId);
     if (existing) {
       return existing;
     }
 
-    const sessionPath = toSessionPath(patientId);
-    await mkdir(join(sessionPath, "db"), { recursive: true });
-    await mkdir(join(sessionPath, "files"), { recursive: true });
+    const runtimeInitialization = (async () => {
+      const sessionPath = toSessionPath(patientId);
+      await mkdir(join(sessionPath, "db"), { recursive: true });
+      await mkdir(join(sessionPath, "files"), { recursive: true });
 
-    const client = tdl.createClient({
-      apiId: telegramConfig.apiId,
-      apiHash: telegramConfig.apiHash,
-      databaseDirectory: join(sessionPath, "db"),
-      filesDirectory: join(sessionPath, "files"),
-      databaseEncryptionKey: toTdlibBytes(telegramConfig.encryptionKey),
-      tdlibParameters: {
-        use_message_database: false,
-        use_chat_info_database: false,
-        use_file_database: false,
-        use_secret_chats: false,
-        system_language_code: "en",
-        application_version: "1.0.0",
-        device_model: "GazeConnect Server",
-        system_version: "Bun/Elysia",
-      },
-    });
-
-    const runtime: PatientRuntime = {
-      patientId,
-      sessionPath,
-      client,
-      authState: "waiting_phone_number",
-      telegramUserId: null,
-      connectedAt: null,
-    };
-
-    client.on("update", (update: unknown) => {
-      void this.handleUpdate(patientId, update as TdObject);
-    });
-
-    client.on("error", (error: unknown) => {
-      logger.error(
-        {
-          patientId,
-          sessionPath,
-          error: serializeError(error),
+      const client = tdl.createClient({
+        apiId: telegramConfig.apiId,
+        apiHash: telegramConfig.apiHash,
+        databaseDirectory: join(sessionPath, "db"),
+        filesDirectory: join(sessionPath, "files"),
+        databaseEncryptionKey: toTdlibBytes(telegramConfig.encryptionKey),
+        tdlibParameters: {
+          use_message_database: false,
+          use_chat_info_database: false,
+          use_file_database: false,
+          use_secret_chats: false,
+          system_language_code: "en",
+          application_version: "1.0.0",
+          device_model: "GazeConnect Server",
+          system_version: "Bun/Elysia",
         },
-        "tdlib client error",
-      );
+      });
+
+      const runtime: PatientRuntime = {
+        patientId,
+        sessionPath,
+        client,
+        authState: "waiting_phone_number",
+        telegramUserId: null,
+        connectedAt: null,
+      };
+
+      client.on("update", (update: unknown) => {
+        void this.handleUpdate(patientId, update as TdObject);
+      });
+
+      client.on("error", (error: unknown) => {
+        if (isTdlibWrongDatabaseEncryptionKey(error)) {
+          this.keyMismatchPatients.add(patientId);
+        }
+
+        logger.error(
+          {
+            patientId,
+            sessionPath,
+            error: serializeError(error),
+          },
+          "tdlib client error",
+        );
+      });
+
+      this.runtimes.set(patientId, runtime);
+
+      try {
+        if ("connect" in client && typeof client.connect === "function") {
+          await client.connect();
+        }
+
+        await this.persistRuntime(runtime);
+        await this.refreshRuntimeState(patientId);
+        this.keyMismatchPatients.delete(patientId);
+        return runtime;
+      } catch (error) {
+        await this.disposeRuntime(patientId);
+
+        throw error;
+      }
+    })().finally(() => {
+      this.runtimeInitializations.delete(patientId);
     });
 
-    this.runtimes.set(patientId, runtime);
+    this.runtimeInitializations.set(patientId, runtimeInitialization);
+    return runtimeInitialization;
+  }
 
-    if ("connect" in client && typeof client.connect === "function") {
-      await client.connect();
+  private async disposeRuntime(patientId: string): Promise<void> {
+    const runtime = this.runtimes.get(patientId);
+    this.runtimes.delete(patientId);
+
+    if (!runtime) {
+      return;
     }
 
-    await this.persistRuntime(runtime);
-    await this.refreshRuntimeState(patientId);
+    if ("close" in runtime.client && typeof runtime.client.close === "function") {
+      try {
+        await runtime.client.close();
+      } catch (error) {
+        logger.warn({ patientId, error: serializeError(error) }, "failed to close tdlib client during runtime disposal");
+      }
+    }
+  }
 
-    return runtime;
+  private async resetSessionStorage(patientId: string): Promise<void> {
+    const sessionPath = toSessionPath(patientId);
+
+    await this.disposeRuntime(patientId);
+    await rm(sessionPath, { recursive: true, force: true });
+    this.keyMismatchPatients.delete(patientId);
+
+    logger.warn({ patientId, sessionPath }, "cleared telegram session storage due to encryption key mismatch");
   }
 
   private async ensureAuthenticatedRuntime(patientId: string): Promise<PatientRuntime> {

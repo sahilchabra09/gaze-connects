@@ -16,6 +16,7 @@ export type PatientRuntime = {
 
 export type EnsureRuntimeOptions = {
   skipInitialize?: boolean
+  forceRecreate?: boolean
 };
 
 export type TdMessage = TdObject & {

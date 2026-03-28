@@ -6,6 +6,7 @@ import { AUTH_MESSAGES } from "./auth-messages";
 import { validateEmailDomain } from "./email-validator";
 import { db } from "@/db";
 import { user } from "@/db/schema";
+import { telegramClientManager } from "@/service/telegram-message/tdlib";
 import type {
   AuthHandler,
   BetterAuthApiRecord,
@@ -23,6 +24,10 @@ async function getNormalizedEmailFromRequest(request: Request): Promise<string |
   }
 
   return body.email.trim().toLowerCase()
+}
+
+function shouldWarmTelegram(pathname: string): boolean {
+  return pathname === "/api/auth/get-session" || pathname === "/api/auth/get-session/";
 }
 
 async function findUserByEmail(email: string): Promise<UserIdLookupResult | null> {
@@ -162,14 +167,20 @@ export const createAuthPlugin = () =>
         }
       }
     })
-    .derive(async ({ request: { headers } }) => {
+    .derive(async ({ request }) => {
       /**
        * Get session from request headers
        * Returns user and session if authenticated, null otherwise
        * Available in all routes as { user, session }
        */
       try {
-        const sessionData = await auth.api.getSession({ headers });
+        const sessionData = await auth.api.getSession({ headers: request.headers });
+        const pathname = new URL(request.url).pathname
+
+        if (sessionData?.user?.id && shouldWarmTelegram(pathname)) {
+          void telegramClientManager.warmUpForUser(sessionData.user.id)
+        }
+
         return {
           user: sessionData?.user || null,
           session: sessionData?.session || null,

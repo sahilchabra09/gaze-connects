@@ -67,6 +67,9 @@ export const telegramRoutes = new Elysia({
       response: {
         200: telegramSchemas.authStatus,
         401: telegramSchemas.error,
+        400: telegramSchemas.error,
+        429: telegramSchemas.error,
+        503: telegramSchemas.error,
         409: telegramSchemas.error,
         500: telegramSchemas.error,
       },
@@ -96,6 +99,9 @@ export const telegramRoutes = new Elysia({
       response: {
         200: telegramSchemas.authStatus,
         401: telegramSchemas.error,
+        400: telegramSchemas.error,
+        429: telegramSchemas.error,
+        503: telegramSchemas.error,
         409: telegramSchemas.error,
         500: telegramSchemas.error,
       },
