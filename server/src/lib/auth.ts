@@ -3,6 +3,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { Resend } from "resend";
 import { user, session, verification, account } from "../db/schema";
 import { db } from "@/db";
+import type { VerificationEmailPayload } from "@/types/auth";
 import { logger } from "./logger";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -34,10 +35,7 @@ export const auth = betterAuth({
     sendVerificationEmail: async ({
       user: verificationUser,
       url,
-    }: {
-      user: { email: string }
-      url: string
-    }) => {
+    }: VerificationEmailPayload) => {
       try {
         logger.info({ email: verificationUser.email }, "Sending verification email")
 

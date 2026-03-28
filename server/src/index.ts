@@ -2,6 +2,7 @@ import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
 import { logger } from "./lib/logger";
+import { gazeRoutes } from "./routes/gaze";
 import { userRoutes } from "./routes/user";
 
 /**
@@ -55,6 +56,7 @@ const app = new Elysia()
     app
       // Better Auth endpoints are mounted by middleware at /api/auth/*
       // User routes: /api/users/me, /api/users/:id
+      .use(gazeRoutes)
       .use(userRoutes)
   )
   .listen(8000);
