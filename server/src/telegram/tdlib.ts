@@ -26,6 +26,10 @@ type PatientRuntime = {
   connectedAt: string | null
 };
 
+type EnsureRuntimeOptions = {
+  skipInitialize?: boolean
+};
+
 type TdMessage = TdObject & {
   id: string | number
   chat_id: string | number
@@ -462,15 +466,17 @@ export class TelegramClientManager {
 
     for (const session of sessions) {
       try {
-        await this.ensureRuntime(session.patientId);
+        await this.ensureRuntime(session.patientId, { skipInitialize: true });
       } catch (error) {
         logger.error({ error, patientId: session.patientId }, "failed to restore telegram session");
       }
     }
   }
 
-  private async ensureRuntime(patientId: string): Promise<PatientRuntime> {
-    await this.initialize();
+  private async ensureRuntime(patientId: string, options?: EnsureRuntimeOptions): Promise<PatientRuntime> {
+    if (!options?.skipInitialize) {
+      await this.initialize();
+    }
 
     const existing = this.runtimes.get(patientId);
     if (existing) {

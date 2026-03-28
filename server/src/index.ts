@@ -10,8 +10,6 @@ import { telegramClientManager } from "./telegram/tdlib";
  * GazeCore Backend - Main Server
  * Route-first architecture
  */
-await telegramClientManager.initialize();
-
 const app = new Elysia()
   .use(
     swagger({
@@ -72,3 +70,9 @@ logger.info(
   },
   "GazeConnect server started"
 )
+
+void telegramClientManager.initialize().then(() => {
+  logger.info("telegram client manager initialized")
+}).catch((error) => {
+  logger.error({ error }, "telegram client manager failed to initialize")
+})
