@@ -25,7 +25,7 @@ export function ModeStep({ state }: { state: GazeCoreWidgetState }) {
         <div className="space-y-3 rounded-md border p-4">
           <p className="text-sm font-medium">9-Point Calibration</p>
           <p className="text-sm text-muted-foreground">
-            Look at each target and press Space. Capture runs for 3 seconds and uses the most common gaze vector sample for each point.
+            Starting calibration issues a fresh GazeConnect token. Look at each target and press Space. Capture runs for 3 seconds per point, the ninth target triggers the gyro snapshot flow, and live preview starts automatically once calibration is finalized.
           </p>
           <Button className="w-full" onClick={state.startCalibration} disabled={state.calibrating || !state.previewActive}>
             Start Calibration
@@ -53,7 +53,7 @@ export function ModeStep({ state }: { state: GazeCoreWidgetState }) {
 
         <div className="space-y-3 rounded-md border border-dashed p-4 text-sm">
           <p className="text-muted-foreground">
-            Live preview needs calibration JSON, a gyro zero snapshot, live gaze vectors, token authorization, and a websocket route.
+            Live preview needs calibration JSON, a gyro zero snapshot, live gaze vectors, token authorization, and a websocket route. The widget now prepares those automatically during calibration whenever the backend is configured.
           </p>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <RequirementStatus label="Calibration JSON" ready={Boolean(state.calibrationResult.data)} />
@@ -65,7 +65,7 @@ export function ModeStep({ state }: { state: GazeCoreWidgetState }) {
           </div>
           {!state.gyroSnapshotConfigured && (
             <p className="text-xs text-muted-foreground">
-              Gyro zero capture needs a backend base URL plus either an API key and device UUID or an already-issued token.
+              Gyro zero capture needs a backend base URL plus either an authenticated GazeConnect session, device API key + UUID, or an already-issued token.
             </p>
           )}
           {state.livePreviewError && (
