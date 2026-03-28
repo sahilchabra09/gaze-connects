@@ -1,0 +1,11 @@
+import { ModeGridScreen } from "@/components/modes/mode-grid-screen";
+import { getModuleCards } from "@/lib/mode-navigation";
+
+export default function TalkLivePage() {
+	return (
+		<ModeGridScreen
+			cards={getModuleCards("talk-live")}
+		/>
+	);
+}
+
