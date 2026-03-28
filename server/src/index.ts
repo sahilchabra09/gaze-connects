@@ -3,7 +3,9 @@ import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
 import { logger } from "./lib/logger";
 import { gazeRoutes } from "./routes/gaze";
+import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+import { telegramClientManager } from "./telegram/tdlib";
 
 /**
  * GazeCore Backend - Main Server
@@ -57,6 +59,7 @@ const app = new Elysia()
       // Better Auth endpoints are mounted by middleware at /api/auth/*
       // User routes: /api/users/me, /api/users/:id
       .use(gazeRoutes)
+      .use(telegramRoutes)
       .use(userRoutes)
   )
   .listen(8000);
@@ -69,3 +72,9 @@ logger.info(
   },
   "GazeConnect server started"
 )
+
+void telegramClientManager.initialize().then(() => {
+  logger.info("telegram client manager initialized")
+}).catch((error) => {
+  logger.error({ error }, "telegram client manager failed to initialize")
+})
