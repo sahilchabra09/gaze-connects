@@ -34,11 +34,24 @@ function parseGyroPayload(payload: string): Pick<GyroReading, "x" | "y" | "z" | 
 class GazeMqttBridge {
   private client: MqttClient | null = null
   private connected = false
-  private connectPromise: Promise<void> | null = null
+  private lastErrorLogAt = 0
   private readonly latestReadings = new Map<string, GyroReading>()
   private readonly subscriptionsByUuid = new Map<string, TopicSubscription>()
   private readonly uuidByTopic = new Map<string, string>()
   private readonly waitersByUuid = new Map<string, Set<GyroWaiter>>()
+
+  private buildZeroGyroReading(topic?: string): GyroReading {
+    return {
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      timestamp: Date.now(),
+      ...(topic ? { topic } : {}),
+    }
+  }
 
   private ensureClient() {
     if (this.client) return this.client
@@ -47,6 +60,7 @@ class GazeMqttBridge {
       clientId: `${gazeConfig.mqttClientIdPrefix}-${randomUUID().slice(0, 8)}`,
       reconnectPeriod: 2000,
       keepalive: 60,
+      connectTimeout: 5000,
     })
 
     client.on("connect", () => {
@@ -65,7 +79,12 @@ class GazeMqttBridge {
     })
 
     client.on("error", (error) => {
-      console.error("[MQTT] bridge error:", error)
+      const now = Date.now()
+      if (now - this.lastErrorLogAt >= 15000) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn("[MQTT] bridge unavailable, running with gyro fallback:", message)
+        this.lastErrorLogAt = now
+      }
     })
 
     client.on("message", (topic, payloadBuffer) => {
@@ -103,45 +122,6 @@ class GazeMqttBridge {
     return client
   }
 
-  private async waitUntilConnected() {
-    if (this.connected) return
-    if (this.connectPromise) {
-      await this.connectPromise
-      return
-    }
-
-    const client = this.ensureClient()
-    this.connectPromise = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cleanup()
-        reject(new Error("Timed out while connecting to the MQTT broker."))
-      }, 6000)
-
-      const handleConnect = () => {
-        cleanup()
-        this.connected = true
-        resolve()
-      }
-
-      const handleError = (error: Error) => {
-        cleanup()
-        reject(error)
-      }
-
-      const cleanup = () => {
-        clearTimeout(timeout)
-        client.off("connect", handleConnect)
-        client.off("error", handleError)
-        this.connectPromise = null
-      }
-
-      client.on("connect", handleConnect)
-      client.on("error", handleError)
-    })
-
-    await this.connectPromise
-  }
-
   async retainSubscription(uuid: string) {
     const normalizedUuid = uuid.trim()
     if (!normalizedUuid) {
@@ -164,13 +144,9 @@ class GazeMqttBridge {
     this.subscriptionsByUuid.set(normalizedUuid, subscription)
     this.uuidByTopic.set(topic, normalizedUuid)
 
-    try {
-      await this.waitUntilConnected()
-      this.client?.subscribe(topic)
-    } catch (error) {
-      this.subscriptionsByUuid.delete(normalizedUuid)
-      this.uuidByTopic.delete(topic)
-      throw error
+    const client = this.ensureClient()
+    if (this.connected) {
+      client.subscribe(topic)
     }
 
     return () => this.releaseSubscription(normalizedUuid)
@@ -196,6 +172,7 @@ class GazeMqttBridge {
     const normalizedUuid = uuid.trim()
     const requestTimestamp = Date.now()
     const release = await this.retainSubscription(normalizedUuid)
+    const topic = buildGyroTopic(normalizedUuid)
 
     try {
       const latest = this.latestReading(normalizedUuid)
@@ -203,24 +180,28 @@ class GazeMqttBridge {
         return latest
       }
 
-      return await new Promise<GyroReading>((resolve, reject) => {
+      const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1000
+
+      return await new Promise<GyroReading>((resolve) => {
         const waiters = this.waitersByUuid.get(normalizedUuid) ?? new Set<GyroWaiter>()
         const waiter: GyroWaiter = {
           minTimestamp: requestTimestamp,
           resolve,
-          reject,
+          reject: () => {},
           timeout: setTimeout(() => {
             waiters.delete(waiter)
             if (waiters.size === 0) {
               this.waitersByUuid.delete(normalizedUuid)
             }
-            reject(new Error("Timed out while waiting for the gyro snapshot."))
-          }, timeoutMs),
+            resolve(this.buildZeroGyroReading(topic))
+          }, safeTimeoutMs),
         }
 
         waiters.add(waiter)
         this.waitersByUuid.set(normalizedUuid, waiters)
       })
+    } catch {
+      return this.buildZeroGyroReading(topic)
     } finally {
       release()
     }
@@ -231,7 +212,7 @@ class GazeMqttBridge {
     for (const waiters of this.waitersByUuid.values()) {
       for (const waiter of waiters) {
         clearTimeout(waiter.timeout)
-        waiter.reject(new Error("MQTT bridge was closed."))
+        waiter.resolve(this.buildZeroGyroReading())
       }
     }
 

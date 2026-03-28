@@ -1,14 +1,7 @@
 import { createAuthClient } from "better-auth/react";
+import { normalizeBackendBaseURL } from "@/lib/telegram/api-base";
 
-function normalizeAuthBaseURL(value?: string) {
-  if (!value) {
-    return undefined;
-  }
-
-  return value.replace(/\/api\/auth\/?$/, "").replace(/\/$/, "");
-}
-
-export const authBaseURL = normalizeAuthBaseURL(process.env.NEXT_PUBLIC_BETTER_AUTH_URL);
+export const authBaseURL = normalizeBackendBaseURL(process.env.NEXT_PUBLIC_BETTER_AUTH_URL);
 
 export const authClient = createAuthClient({
   ...(authBaseURL ? { baseURL: authBaseURL } : {}),
