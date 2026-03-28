@@ -1,3 +1,5 @@
+import type { NecessityRequestEventData } from "@/lib/necessity/types";
+
 export const TELEGRAM_AUTH_STATES = [
   "waiting_phone_number",
   "waiting_code",
@@ -122,6 +124,9 @@ export type TelegramEventMap = {
   chat_opened: TelegramChatOpenedEventData;
   message_new: TelegramMessageEventData;
   message_sent: TelegramMessageEventData;
+  necessity_request_created: NecessityRequestEventData;
+  necessity_request_acknowledged: NecessityRequestEventData;
+  necessity_request_escalated: NecessityRequestEventData;
 };
 
 export type TelegramEventType = keyof TelegramEventMap;

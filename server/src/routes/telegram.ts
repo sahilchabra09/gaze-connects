@@ -32,6 +32,20 @@ function handleTelegramError(
     return errorResponse(error.code, error.message);
   }
 
+  if (error && typeof error === "object") {
+    const rawCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+    const code = typeof rawCode === "number" ? rawCode : Number(rawCode);
+    const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+
+    if (code === 406 && message.includes("AUTH_KEY_DUPLICATED")) {
+      set.status = 409;
+      return errorResponse(
+        "TELEGRAM_AUTH_KEY_DUPLICATED",
+        "Telegram session was opened in another client. Reconnect Telegram and try again",
+      );
+    }
+  }
+
   logger.error({ ...context, error: serializeError(error) }, "telegram route failed");
   set.status = 500;
   return errorResponse("INTERNAL_SERVER_ERROR", "Telegram operation failed");

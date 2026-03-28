@@ -5,11 +5,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
 import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
 
+import { NecessitySetupPanel } from "@/components/necessity/necessity-setup-panel";
 import { toBackendURL } from "@/lib/telegram/api-base";
 import { authBaseURL, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
-type SetupTab = "patient" | "features" | "calibration" | "hardware";
+type SetupTab = "patient" | "features" | "necessities" | "calibration" | "hardware";
 
 type ApiErrorPayload = {
 	error?: string;
@@ -19,6 +20,7 @@ type ApiErrorPayload = {
 const SETUP_TABS: Array<{ key: SetupTab; label: string }> = [
 	{ key: "patient", label: "Patient & Contacts" },
 	{ key: "features", label: "Customize Features" },
+	{ key: "necessities", label: "Necessities" },
 	{ key: "calibration", label: "Eye Tracker Calibration" },
 	{ key: "hardware", label: "Hardware Password" },
 ];
@@ -194,6 +196,8 @@ export default function SetupPage() {
 				</div>
 			</section>
 		);
+	} else if (activeTab === "necessities") {
+		content = <NecessitySetupPanel />;
 	} else if (activeTab === "calibration") {
 		content = (
 			<div className="space-y-5">

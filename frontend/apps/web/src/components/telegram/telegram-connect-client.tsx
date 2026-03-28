@@ -99,6 +99,16 @@ export function TelegramConnectClient({
       connectionState={connectionState}
     >
       <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-3">
+        <div className="flex items-center justify-start">
+          <Link
+            href="/messaging"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 text-sm font-semibold text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-800"
+          >
+            <ArrowLeft className="size-4" />
+            Back
+          </Link>
+        </div>
+
         {message ? (
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
             {message}

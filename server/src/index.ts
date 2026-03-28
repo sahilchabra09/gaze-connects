@@ -2,14 +2,18 @@ import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
 import { logger } from "./lib/logger";
+import { necessityRoutes } from "./routes/necessity";
 import { gazeRoutes } from "./routes/gaze";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+import { necessityService } from "./service/necessity/service";
 
 /**
  * GazeCore Backend - Main Server
  * Route-first architecture
  */
+await necessityService.initialize();
+
 const app = new Elysia()
   .use(
     swagger({
@@ -58,6 +62,7 @@ const app = new Elysia()
       // Better Auth endpoints are mounted by middleware at /api/auth/*
       // User routes: /api/users/me, /api/users/:id
       .use(gazeRoutes)
+      .use(necessityRoutes)
       .use(telegramRoutes)
       .use(userRoutes)
   )
