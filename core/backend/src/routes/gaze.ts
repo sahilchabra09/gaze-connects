@@ -31,12 +31,38 @@ function buildZeroGyroReading(): GyroReading {
   }
 }
 
-function parseJsonMessage(rawMessage: unknown) {
-  if (typeof rawMessage !== "string") {
-    throw new Error("WebSocket payload must be text JSON.")
+async function parseJsonMessage(rawMessage: unknown) {
+  if (rawMessage && typeof rawMessage === "object" && !ArrayBuffer.isView(rawMessage) && !(rawMessage instanceof ArrayBuffer)) {
+    const blobLike = rawMessage as { text?: () => Promise<string> }
+    if (typeof blobLike.text === "function") {
+      const textPayload = await blobLike.text()
+      const parsed = JSON.parse(textPayload) as unknown
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("WebSocket payload must be a JSON object.")
+      }
+
+      return parsed as JsonRecord
+    }
+
+    return rawMessage as JsonRecord
   }
 
-  const parsed = JSON.parse(rawMessage) as unknown
+  let textPayload: string | null = null
+
+  if (typeof rawMessage === "string") {
+    textPayload = rawMessage
+  } else if (rawMessage instanceof ArrayBuffer) {
+    textPayload = Buffer.from(rawMessage).toString("utf8")
+  } else if (ArrayBuffer.isView(rawMessage)) {
+    const view = rawMessage as ArrayBufferView
+    textPayload = Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString("utf8")
+  }
+
+  if (!textPayload) {
+    throw new Error("WebSocket payload must be JSON text or UTF-8 bytes.")
+  }
+
+  const parsed = JSON.parse(textPayload) as unknown
   if (!parsed || typeof parsed !== "object") {
     throw new Error("WebSocket payload must be a JSON object.")
   }
@@ -244,7 +270,7 @@ export const gazeRoutes = new Elysia({ prefix: "/gaze" })
         ws.close(4401, reason)
       }
     },
-    message(ws, rawMessage) {
+    async message(ws, rawMessage) {
       const session = gazeSessionStore.getSession(ws.id)
       if (!session) {
         sendSocketJson(ws, {
@@ -256,7 +282,7 @@ export const gazeRoutes = new Elysia({ prefix: "/gaze" })
       }
 
       try {
-        const payload = parseJsonMessage(rawMessage)
+        const payload = await parseJsonMessage(rawMessage)
         const sessionInit = parseSessionInitMessage(payload)
         if (sessionInit) {
           const initializedSession = gazeSessionStore.initializeSession(
