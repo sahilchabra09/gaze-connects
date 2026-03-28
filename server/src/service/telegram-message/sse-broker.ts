@@ -1,6 +1,4 @@
-import type { TelegramEventPayload } from "./types";
-
-type Subscriber = (event: TelegramEventPayload) => void;
+import type { Subscriber } from "./types";
 
 export class TelegramSseBroker {
   private readonly subscribers = new Map<string, Set<Subscriber>>();

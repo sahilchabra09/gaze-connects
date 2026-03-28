@@ -6,44 +6,24 @@ import * as tdl from "tdl";
 import { db } from "@/db";
 import { patientTelegramSession } from "@/db/schema";
 import { logger, serializeError } from "@/lib/logger";
-import { contactService, type PatientContactRecord } from "./contact-service";
+import { contactService } from "./contact-service";
 import { telegramConfig, ensureTelegramStorage } from "./config";
 import { TelegramDomainError } from "./errors";
 import { toTelegramPhoneNumber } from "./phone";
 import { telegramSseBroker } from "./sse-broker";
-import type { ChatMessage, ChatSummary, TelegramAuthState, TelegramRuntimeStatus } from "./types";
-
-type TdlibClient = ReturnType<typeof tdl.createClient>;
-
-type TdObject = { _: string; [key: string]: any };
-
-type PatientRuntime = {
-  patientId: string
-  sessionPath: string
-  client: TdlibClient
-  authState: TelegramAuthState
-  telegramUserId: string | null
-  connectedAt: string | null
-};
-
-type EnsureRuntimeOptions = {
-  skipInitialize?: boolean
-};
-
-type TdMessage = TdObject & {
-  id: string | number
-  chat_id: string | number
-  content?: TdObject
-  is_outgoing: boolean
-  date: number
-};
-
-type TdChat = TdObject & {
-  id: string | number
-  title: string
-  last_message?: TdMessage
-  unread_count: number
-};
+import type {
+  ChatMessage,
+  ChatSummary,
+  EnsureRuntimeOptions,
+  PatientContactRecord,
+  PatientRuntime,
+  TelegramAuthState,
+  TelegramRuntimeStatus,
+  TdChat,
+  TdMessage,
+  TdObject,
+  TdlibClient,
+} from "./types";
 
 let tdlibConfigured = false;
 

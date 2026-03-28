@@ -1,12 +1,12 @@
 import { Elysia, t } from "elysia";
 import { auth } from "@/lib/auth";
 import { logger, serializeError } from "@/lib/logger";
-import { contactService } from "@/telegram/contact-service";
-import { isTelegramDomainError } from "@/telegram/errors";
-import { STATIC_REPLY_OPTIONS } from "@/telegram/reply-options";
-import { telegramSchemas } from "@/telegram/schemas";
-import { telegramSseBroker } from "@/telegram/sse-broker";
-import { telegramClientManager } from "@/telegram/tdlib";
+import { contactService } from "@/service/telegram-message/contact-service";
+import { isTelegramDomainError } from "@/service/telegram-message/errors";
+import { STATIC_REPLY_OPTIONS } from "@/service/telegram-message/reply-options";
+import { telegramSchemas } from "@/service/telegram-message/schemas";
+import { telegramSseBroker } from "@/service/telegram-message/sse-broker";
+import { telegramClientManager } from "@/service/telegram-message/tdlib";
 
 type SessionUser = {
   id: string

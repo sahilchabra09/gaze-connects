@@ -1,12 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-
-type TelegramConfig = {
-  apiId: number
-  apiHash: string
-  encryptionKey: string
-  sessionsDir: string
-};
+import type { TelegramConfig } from "./types";
 
 function parseRequiredEnv(name: string): string {
   const value = process.env[name]?.trim();

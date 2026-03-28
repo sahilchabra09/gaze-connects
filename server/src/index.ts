@@ -5,7 +5,7 @@ import { logger } from "./lib/logger";
 import { gazeRoutes } from "./routes/gaze";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
-import { telegramClientManager } from "./telegram/tdlib";
+import { telegramClientManager } from "./service/telegram-message/tdlib";
 
 /**
  * GazeCore Backend - Main Server
