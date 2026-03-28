@@ -11,6 +11,19 @@ const updateProfileBody = t.Object({
   image: t.Optional(t.String()),
 });
 
+const hardwarePasswordBody = t.Object({
+  password: t.String({ minLength: 6 }),
+});
+
+const hardwarePasswordStatusResponse = t.Object({
+  isSet: t.Boolean(),
+});
+
+const hardwarePasswordUpdatedResponse = t.Object({
+  ok: t.Boolean(),
+  message: t.String(),
+});
+
 const errorResponse = (error: string, message: string) => ({ error, message });
 
 const toUserResponse = (row: UserRow): UserResponse => ({
@@ -93,6 +106,83 @@ export const userRoutes = new Elysia({
       body: updateProfileBody,
       response: {
         200: authSchemas.user,
+        401: authSchemas.error,
+        404: authSchemas.error,
+      },
+    }
+  )
+  .get(
+    "/me/hardware-password",
+    async ({ request, set }) => {
+      const sessionUser = await resolveSessionUser(request);
+      if (!sessionUser) {
+        set.status = 401;
+        return errorResponse("UNAUTHORIZED", "Sign in required");
+      }
+
+      const result = await db
+        .select({ hardwarePasswordHash: user.hardwarePasswordHash })
+        .from(user)
+        .where(eq(user.id, sessionUser.id))
+        .limit(1);
+
+      const found = result[0];
+      if (!found) {
+        set.status = 404;
+        return errorResponse("NOT_FOUND", "User not found");
+      }
+
+      return {
+        isSet: Boolean(found.hardwarePasswordHash),
+      };
+    },
+    {
+      response: {
+        200: hardwarePasswordStatusResponse,
+        401: authSchemas.error,
+        404: authSchemas.error,
+      },
+    }
+  )
+  .post(
+    "/me/hardware-password",
+    async ({ request, body, set }) => {
+      const sessionUser = await resolveSessionUser(request);
+      if (!sessionUser) {
+        set.status = 401;
+        return errorResponse("UNAUTHORIZED", "Sign in required");
+      }
+
+      if (!body.password.trim()) {
+        set.status = 400;
+        return errorResponse("VALIDATION_ERROR", "Hardware password cannot be empty");
+      }
+
+      const passwordHash = await Bun.password.hash(body.password);
+      const updated = await db
+        .update(user)
+        .set({
+          hardwarePasswordHash: passwordHash,
+          updatedAt: new Date(),
+        })
+        .where(eq(user.id, sessionUser.id))
+        .returning({ id: user.id });
+
+      if (!updated[0]) {
+        set.status = 404;
+        return errorResponse("NOT_FOUND", "User not found");
+      }
+
+      return {
+        ok: true,
+        message: "Hardware password saved",
+      };
+    },
+    {
+      body: hardwarePasswordBody,
+      response: {
+        200: hardwarePasswordUpdatedResponse,
+        400: authSchemas.error,
         401: authSchemas.error,
         404: authSchemas.error,
       },
