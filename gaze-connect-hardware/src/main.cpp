@@ -5,6 +5,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <LittleFS.h>
 
@@ -162,6 +163,20 @@ String normalizeBackendUrl(const String& url) {
     normalized.remove(normalized.length() - 1);
   }
   return normalized;
+}
+
+String buildIdentityValidationUrl(const String& backendUrl) {
+  String normalized = normalizeBackendUrl(backendUrl);
+
+  if (normalized.endsWith("/api/gaze/validate/uuid")) {
+    return normalized;
+  }
+
+  if (normalized.endsWith("/api")) {
+    return normalized + "/gaze/validate/uuid";
+  }
+
+  return normalized + "/api/gaze/validate/uuid";
 }
 
 bool isValidBackendUrl(const String& url) {
@@ -413,7 +428,7 @@ bool requestIdentityToken(const String& backendUrl, const String& email, const S
     return false;
   }
 
-  String requestUrl = normalizeBackendUrl(backendUrl);
+  String requestUrl = buildIdentityValidationUrl(backendUrl);
   if (!isValidBackendUrl(requestUrl)) {
     Serial.println("✗ Backend URL is invalid!");
     return false;
@@ -424,17 +439,25 @@ bool requestIdentityToken(const String& backendUrl, const String& email, const S
   Serial.print(" with email: ");
   Serial.println(email);
 
-  WiFiClient client;
+  WiFiClient plainClient;
+  WiFiClientSecure secureClient;
+  WiFiClient* transportClient = &plainClient;
+
+  if (requestUrl.startsWith("https://")) {
+    secureClient.setInsecure();
+    transportClient = &secureClient;
+  }
+
   HTTPClient http;
   
-  if (!http.begin(client, requestUrl)) {
+  if (!http.begin(*transportClient, requestUrl)) {
     Serial.println("✗ HTTP.begin() failed!");
     http.end();
     return false;
   }
   
   http.addHeader("Content-Type", "application/json");
-  String body = "{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}";
+  String body = "{\"email\":\"" + escapeJsonString(email) + "\",\"password\":\"" + escapeJsonString(password) + "\"}";
   
   Serial.println("  Sending request...");
   int code = http.POST(body);
@@ -447,6 +470,8 @@ bool requestIdentityToken(const String& backendUrl, const String& email, const S
 
   if (code != 200 && code != 201) {
     Serial.println("✗ Signin failed");
+    Serial.print("  Response body: ");
+    Serial.println(response);
     return false;
   }
 
