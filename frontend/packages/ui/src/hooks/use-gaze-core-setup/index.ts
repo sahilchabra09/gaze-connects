@@ -345,7 +345,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
       return issuedSocketUrl
     }
 
-    if (!options.backendBaseUrl?.trim() || !options.apiKey?.trim() || !options.deviceUuid?.trim()) {
+    if (!options.backendBaseUrl?.trim()) {
       return ""
     }
 
