@@ -8,6 +8,8 @@ type TokenManagerConfig = {
   initialToken?: string
 }
 
+type TokenIssueMode = "proxy-session" | "device-api-key" | "external-only"
+
 function extractErrorMessage(payload: unknown, fallbackMessage: string) {
   if (!payload || typeof payload !== "object") return fallbackMessage
 
@@ -17,19 +19,43 @@ function extractErrorMessage(payload: unknown, fallbackMessage: string) {
   return fallbackMessage
 }
 
-async function requestGazeAccessToken(config: Required<Pick<TokenManagerConfig, "backendBaseUrl" | "apiKey" | "deviceUuid">>) {
-  const response = await fetch(buildTokenRouteUrl(config.backendBaseUrl), {
+function resolveTokenIssueMode(config: TokenManagerConfig): TokenIssueMode {
+  if (config.backendBaseUrl?.trim() && config.apiKey?.trim() && config.deviceUuid?.trim()) {
+    return "device-api-key"
+  }
+
+  if (config.backendBaseUrl?.trim()) {
+    return "proxy-session"
+  }
+
+  return "external-only"
+}
+
+async function requestGazeAccessToken(config: TokenManagerConfig & { backendBaseUrl: string }) {
+  const mode = resolveTokenIssueMode(config)
+  if (mode === "external-only") {
+    throw new Error("A backend base URL is required to issue a gaze access token.")
+  }
+
+  const requestInit: RequestInit = {
     method: "POST",
-    headers: {
+  }
+
+  if (mode === "device-api-key") {
+    requestInit.headers = {
       "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    }
+    requestInit.body = JSON.stringify({
       apiKey: config.apiKey,
       metadata: {
         uuid: config.deviceUuid,
       },
-    }),
-  })
+    })
+  } else {
+    requestInit.credentials = "include"
+  }
+
+  const response = await fetch(buildTokenRouteUrl(config.backendBaseUrl), requestInit)
 
   const payload = await response.json().catch(() => null) as GazeAccessTokenResponse | { message?: string; error?: string } | null
   if (!response.ok || !payload || typeof payload !== "object" || !("token" in payload) || typeof payload.token !== "string") {
@@ -44,6 +70,9 @@ async function requestGazeAccessToken(config: Required<Pick<TokenManagerConfig, 
   return {
     token: payload.token,
     expiresAt,
+    websocketUrl: typeof payload.websocketUrl === "string" && payload.websocketUrl.trim()
+      ? payload.websocketUrl.trim()
+      : undefined,
   }
 }
 
@@ -76,15 +105,15 @@ export class GazeWidgetTokenManager {
   }
 
   canIssueToken() {
-    return Boolean(
-      this.config.backendBaseUrl?.trim()
-      && this.config.apiKey?.trim()
-      && this.config.deviceUuid?.trim(),
-    )
+    return resolveTokenIssueMode(this.config) !== "external-only"
   }
 
   canAuthorize() {
     return Boolean(this.cachedToken?.token) || this.canIssueToken()
+  }
+
+  getWebSocketUrl() {
+    return this.cachedToken?.websocketUrl?.trim() || ""
   }
 
   async ensureToken(forceRefresh = false) {
@@ -93,27 +122,29 @@ export class GazeWidgetTokenManager {
     }
 
     if (!this.canIssueToken()) {
-      if (this.cachedToken) return this.cachedToken
-      throw new Error("Backend base URL, API key, and device UUID are required for token authorization.")
+      if (this.cachedToken && !forceRefresh) return this.cachedToken
+      if (this.cachedToken) {
+        throw new Error("The gaze access token expired and could not be refreshed.")
+      }
+      throw new Error("A GazeConnect session or token issuer configuration is required before calibration can start.")
     }
 
-    if (!forceRefresh && this.pendingRefresh) {
+    if (this.pendingRefresh) {
       return this.pendingRefresh
     }
 
     const backendBaseUrl = this.config.backendBaseUrl!.trim()
-    const apiKey = this.config.apiKey!.trim()
-    const deviceUuid = this.config.deviceUuid!.trim()
 
     this.pendingRefresh = requestGazeAccessToken({
       backendBaseUrl,
-      apiKey,
-      deviceUuid,
+      apiKey: this.config.apiKey?.trim(),
+      deviceUuid: this.config.deviceUuid?.trim(),
     }).then((issuedToken) => {
       const nextToken: CachedAccessToken = {
         token: issuedToken.token,
         expiresAt: issuedToken.expiresAt,
         source: "issued",
+        websocketUrl: issuedToken.websocketUrl,
       }
       this.cachedToken = nextToken
       return nextToken
@@ -128,6 +159,10 @@ export class GazeWidgetTokenManager {
     const firstToken = await this.ensureToken(false)
     let response = await makeRequest(firstToken.token)
     if (response.status !== 401 && response.status !== 403) {
+      return response
+    }
+
+    if (!this.canIssueToken()) {
       return response
     }
 

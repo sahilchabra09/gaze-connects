@@ -21,4 +21,5 @@ export type CachedAccessToken = {
   token: string
   expiresAt: number
   source: "issued" | "external"
+  websocketUrl?: string
 }

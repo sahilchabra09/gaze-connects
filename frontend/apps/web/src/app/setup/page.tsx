@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
+import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
 
 import { toBackendURL } from "@/lib/telegram/api-base";
+import { authBaseURL, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
 type SetupTab = "patient" | "features" | "calibration" | "hardware";
@@ -33,8 +35,19 @@ function LabeledInput({ label, placeholder }: { label: string; placeholder?: str
 	);
 }
 
+function resolveGazeConnectBackendUrl() {
+	const explicitUrl = process.env.NEXT_PUBLIC_GAZE_CONNECT_BACKEND_URL?.trim();
+	if (explicitUrl) {
+		return explicitUrl.replace(/\/+$/g, "");
+	}
+
+	return authBaseURL ?? "";
+}
+
 export default function SetupPage() {
 	const [activeTab, setActiveTab] = useState<SetupTab>("patient");
+	const { data: session, isPending: sessionPending } = useSession();
+	const gazeConnectBackendUrl = resolveGazeConnectBackendUrl();
 	const [hardwarePassword, setHardwarePassword] = useState("");
 	const [hardwarePasswordConfirm, setHardwarePasswordConfirm] = useState("");
 	const [hardwareIsSet, setHardwareIsSet] = useState<boolean | null>(null);
@@ -183,22 +196,33 @@ export default function SetupPage() {
 		);
 	} else if (activeTab === "calibration") {
 		content = (
-			<section className="space-y-5 rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 transition-colors hover:border-zinc-700/85 md:p-6">
-				<h2 className="text-2xl font-semibold text-zinc-100">Eye Tracker Calibration</h2>
-				<p className="text-sm text-zinc-400">
-					Calibration controls are mocked for now. You can later wire these with live device APIs.
-				</p>
-				<div className="grid gap-4 md:grid-cols-2">
-					{["Start Calibration", "Recenter Eyes", "Sensitivity", "Save Profile"].map((item) => (
-						<button
-							key={item}
-							className="rounded-xl border border-zinc-700/80 bg-zinc-900/75 p-4 text-left font-medium text-zinc-100 transition-all hover:-translate-y-0.5 hover:border-zinc-400/85 hover:bg-zinc-900"
+			<div className="space-y-5">
+				{!gazeConnectBackendUrl ? (
+					<section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-100">
+						Set <code>NEXT_PUBLIC_GAZE_CONNECT_BACKEND_URL</code> or <code>NEXT_PUBLIC_BETTER_AUTH_URL</code> so the widget can reach the GazeConnect backend.
+					</section>
+				) : sessionPending ? (
+					<section className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 text-sm text-zinc-300">
+						Checking your GazeConnect session before loading calibration...
+					</section>
+				) : !session ? (
+					<section className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 text-sm text-zinc-300">
+						<p className="mb-4">
+							Sign in first so the widget can request a token from the GazeConnect backend on calibration start.
+						</p>
+						<Link
+							href="/auth"
+							className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 font-medium text-zinc-100 transition-all hover:border-zinc-500 hover:text-white"
 						>
-							{item}
-						</button>
-					))}
-				</div>
-			</section>
+							Open Sign In
+						</Link>
+					</section>
+				) : (
+					<div className="dark overflow-hidden rounded-2xl border border-zinc-800/80 bg-background text-foreground shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+						<GazeCoreWidget backendBaseUrl={gazeConnectBackendUrl} />
+					</div>
+				)}
+			</div>
 		);
 	} else {
 		content = (
@@ -320,4 +344,3 @@ export default function SetupPage() {
 		</main>
 	);
 }
-
