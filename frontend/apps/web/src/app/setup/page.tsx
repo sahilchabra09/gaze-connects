@@ -1,16 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
 import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
 
 import { NecessitySetupPanel } from "@/components/necessity/necessity-setup-panel";
+import { TelegramSetupTab } from "@/components/setup/telegram-setup-tab";
 import { toBackendURL } from "@/lib/telegram/api-base";
 import { authBaseURL, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
-type SetupTab = "patient" | "features" | "necessities" | "calibration" | "hardware";
+
+type SetupTab = "patient" | "features" | "calibration" | "hardware" | "telegram"| "necessities" ;
 
 type ApiErrorPayload = {
 	error?: string;
@@ -23,6 +26,7 @@ const SETUP_TABS: Array<{ key: SetupTab; label: string }> = [
 	{ key: "necessities", label: "Necessities" },
 	{ key: "calibration", label: "Eye Tracker Calibration" },
 	{ key: "hardware", label: "Hardware Password" },
+	{ key: "telegram", label: "Telegram Setup" },
 ];
 
 function LabeledInput({ label, placeholder }: { label: string; placeholder?: string }) {
@@ -46,7 +50,8 @@ function resolveGazeConnectBackendUrl() {
 	return authBaseURL ?? "";
 }
 
-export default function SetupPage() {
+function SetupPageContent() {
+	const searchParams = useSearchParams();
 	const [activeTab, setActiveTab] = useState<SetupTab>("patient");
 	const { data: session, isPending: sessionPending } = useSession();
 	const gazeConnectBackendUrl = resolveGazeConnectBackendUrl();
@@ -58,6 +63,15 @@ export default function SetupPage() {
 	const [hardwareSaving, setHardwareSaving] = useState(false);
 	const [hardwareError, setHardwareError] = useState("");
 	const [hardwareMessage, setHardwareMessage] = useState("");
+
+	useEffect(() => {
+		const tabParam = searchParams.get("tab")?.trim().toLowerCase();
+		if (tabParam === "calibration") {
+			setActiveTab("calibration");
+		} else if (tabParam === "telegram") {
+			setActiveTab("telegram");
+		}
+	}, [searchParams]);
 
 	useEffect(() => {
 		if (activeTab !== "hardware" || hardwareStatusLoaded) {
@@ -228,7 +242,7 @@ export default function SetupPage() {
 				)}
 			</div>
 		);
-	} else {
+	} else if (activeTab === "hardware") {
 		content = (
 			<section className="space-y-5 rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 transition-colors hover:border-zinc-700/85 md:p-6">
 				<div className="flex items-start justify-between gap-3">
@@ -309,6 +323,8 @@ export default function SetupPage() {
 				) : null}
 			</section>
 		);
+	} else {
+		content = <TelegramSetupTab />;
 	}
 
 	return (
@@ -346,5 +362,23 @@ export default function SetupPage() {
 				{content}
 			</div>
 		</main>
+	);
+}
+
+export default function SetupPage() {
+	return (
+		<Suspense
+			fallback={(
+				<main className="min-h-screen bg-black px-4 py-6 text-zinc-100 md:px-8 md:py-8">
+					<div className="mx-auto w-full">
+						<div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 text-sm text-zinc-300">
+							Loading setup...
+						</div>
+					</div>
+				</main>
+			)}
+		>
+			<SetupPageContent />
+		</Suspense>
 	);
 }

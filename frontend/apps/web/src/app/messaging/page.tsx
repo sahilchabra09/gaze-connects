@@ -1,9 +1,14 @@
-import { TelegramHubClient } from "@/components/telegram/telegram-hub-client";
+import { TelegramChatsClient } from "@/components/telegram/telegram-chats-client";
 import { safeTelegramServerCall, serializeTelegramError, telegramServer } from "@/lib/telegram/server";
 
 export const dynamic = "force-dynamic";
 
-export default async function MessagingPage() {
+type MessagingPageProps = {
+  searchParams: Promise<{ page?: string }>;
+};
+
+export default async function MessagingPage({ searchParams }: MessagingPageProps) {
+  const { page } = await searchParams;
   const authResult = await safeTelegramServerCall(() => telegramServer.getAuthStatus());
   const contactsResult =
     authResult.data && !authResult.error
@@ -14,18 +19,16 @@ export default async function MessagingPage() {
       ? await safeTelegramServerCall(() => telegramServer.listChats())
       : { data: null, error: null };
 
-  const contacts = contactsResult.data ?? [];
-  const chats = chatsResult.data ?? [];
-
   return (
-    <TelegramHubClient
+    <TelegramChatsClient
       initialAuthStatus={authResult.data}
+      initialContacts={contactsResult.data ?? []}
+      initialChats={chatsResult.data ?? []}
+      initialPage={Math.max(1, Number(page) || 1)}
       initialError={serializeTelegramError(authResult.error)}
-      counts={{
-        activeContacts: contacts.filter((contact) => contact.isActive).length,
-        mappedChats: chats.length,
-        unreadChats: chats.reduce((total, chat) => total + chat.unreadCount, 0),
-      }}
+      paginationBasePath="/messaging"
+      firstPageBackHref="/"
+      firstPageBackSubtitle="Return to home."
     />
   );
 }

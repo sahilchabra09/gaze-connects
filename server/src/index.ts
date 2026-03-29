@@ -14,6 +14,9 @@ import { necessityService } from "./service/necessity/service";
  */
 await necessityService.initialize();
 
+const host = process.env.HOST ?? "0.0.0.0"
+const port = Number(process.env.PORT ?? 8000)
+
 const app = new Elysia()
   .use(
     swagger({
@@ -66,13 +69,16 @@ const app = new Elysia()
       .use(telegramRoutes)
       .use(userRoutes)
   )
-  .listen(8000);
+  .listen({
+    hostname: host,
+    port,
+  });
 
 logger.info(
   {
-    baseUrl: "http://localhost:8000",
-    authBase: "http://localhost:8000/api/auth",
-    docsUrl: "http://localhost:8000/docs",
+    baseUrl: `http://${host}:${port}`,
+    authBase: `http://${host}:${port}/api/auth`,
+    docsUrl: `http://${host}:${port}/docs`,
   },
   "GazeConnect server started"
 )

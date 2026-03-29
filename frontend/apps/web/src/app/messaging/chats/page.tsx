@@ -26,6 +26,9 @@ export default async function MessagingChatsPage({ searchParams }: MessagingChat
       initialChats={chatsResult.data ?? []}
       initialPage={Math.max(1, Number(page) || 1)}
       initialError={serializeTelegramError(authResult.error ?? contactsResult.error)}
+      paginationBasePath="/messaging/chats"
+      firstPageBackHref="/messaging"
+      firstPageBackSubtitle="Return to messaging hub."
     />
   );
 }
