@@ -21,6 +21,9 @@ type TelegramChatsClientProps = {
   initialChats: TelegramChat[];
   initialPage: number;
   initialError: { status: number; code: string; message: string } | null;
+  paginationBasePath?: string;
+  firstPageBackHref?: string;
+  firstPageBackSubtitle?: string;
 };
 
 const CONTACTS_PER_PAGE = 4;
@@ -76,6 +79,9 @@ export function TelegramChatsClient({
   initialChats,
   initialPage,
   initialError,
+  paginationBasePath = "/messaging/chats",
+  firstPageBackHref = "/messaging",
+  firstPageBackSubtitle = "Return to messaging hub.",
 }: TelegramChatsClientProps) {
   const [authStatus, setAuthStatus] = useState(initialAuthStatus);
   const [contacts, setContacts] = useState(initialContacts);
@@ -126,9 +132,9 @@ export function TelegramChatsClient({
       <TelegramGrid>
         <TelegramCard
           label="Back"
-          subtitle={currentPage > 1 ? "Go to the previous contacts page." : "Return to messaging hub."}
+          subtitle={currentPage > 1 ? "Go to the previous contacts page." : firstPageBackSubtitle}
           icon={<ArrowLeft className="size-5" />}
-          href={currentPage > 1 ? `/messaging/chats?page=${currentPage - 1}` : "/messaging"}
+          href={currentPage > 1 ? `${paginationBasePath}?page=${currentPage - 1}` : firstPageBackHref}
           meta={currentPage > 1 ? `Page ${currentPage - 1}` : "Hub"}
         />
 
@@ -163,7 +169,7 @@ export function TelegramChatsClient({
           label="Next"
           subtitle={currentPage < totalPages ? "Move to the next four contacts." : "No more contacts on the next page."}
           icon={<ArrowRight className="size-5" />}
-          href={currentPage < totalPages ? `/messaging/chats?page=${currentPage + 1}` : undefined}
+          href={currentPage < totalPages ? `${paginationBasePath}?page=${currentPage + 1}` : undefined}
           disabled={currentPage >= totalPages}
           meta={`Page ${currentPage} of ${totalPages}`}
         />

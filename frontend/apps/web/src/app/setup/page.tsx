@@ -7,11 +7,13 @@ import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
 import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
 
 import { NecessitySetupPanel } from "@/components/necessity/necessity-setup-panel";
+import { TelegramSetupTab } from "@/components/setup/telegram-setup-tab";
 import { toBackendURL } from "@/lib/telegram/api-base";
 import { authBaseURL, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
 type SetupTab = "patient" | "features" | "necessities" | "calibration" | "hardware";
+type SetupTab = "patient" | "features" | "calibration" | "hardware" | "telegram";
 
 type ApiErrorPayload = {
 	error?: string;
@@ -24,6 +26,7 @@ const SETUP_TABS: Array<{ key: SetupTab; label: string }> = [
 	{ key: "necessities", label: "Necessities" },
 	{ key: "calibration", label: "Eye Tracker Calibration" },
 	{ key: "hardware", label: "Hardware Password" },
+	{ key: "telegram", label: "Telegram Setup" },
 ];
 
 function LabeledInput({ label, placeholder }: { label: string; placeholder?: string }) {
@@ -65,6 +68,8 @@ export default function SetupPage() {
 		const tabParam = searchParams.get("tab")?.trim().toLowerCase();
 		if (tabParam === "calibration") {
 			setActiveTab("calibration");
+		} else if (tabParam === "telegram") {
+			setActiveTab("telegram");
 		}
 	}, [searchParams]);
 
@@ -237,7 +242,7 @@ export default function SetupPage() {
 				)}
 			</div>
 		);
-	} else {
+	} else if (activeTab === "hardware") {
 		content = (
 			<section className="space-y-5 rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 transition-colors hover:border-zinc-700/85 md:p-6">
 				<div className="flex items-start justify-between gap-3">
@@ -318,6 +323,8 @@ export default function SetupPage() {
 				) : null}
 			</section>
 		);
+	} else {
+		content = <TelegramSetupTab />;
 	}
 
 	return (
