@@ -12,8 +12,8 @@ import { toBackendURL } from "@/lib/telegram/api-base";
 import { authBaseURL, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
-type SetupTab = "patient" | "features" | "necessities" | "calibration" | "hardware";
-type SetupTab = "patient" | "features" | "calibration" | "hardware" | "telegram";
+
+type SetupTab = "patient" | "features" | "calibration" | "hardware" | "telegram"| "necessities" ;
 
 type ApiErrorPayload = {
 	error?: string;
