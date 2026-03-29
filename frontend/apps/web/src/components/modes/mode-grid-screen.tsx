@@ -30,6 +30,15 @@ type ModeGridScreenProps = {
   subtitle?: string;
 };
 
+function readCalibrationReady() {
+  try {
+    const record = testEyeTrackerStorage.readCalibrationRecord();
+    return Boolean(record?.calibration);
+  } catch {
+    return false;
+  }
+}
+
 function getIcon(icon: GridIcon) {
   const className = "size-9 text-zinc-100/95";
 
@@ -56,12 +65,12 @@ function getIcon(icon: GridIcon) {
 }
 
 export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) {
-  const { mockEnabled, toggleMockMode, setMockEnabled } = useMockMode(true);
+  const { mockEnabled, requiresCalibration, setMockModeState } = useMockMode();
   const router = useRouter();
   const { data: session } = useSession();
   const hasHeader = Boolean(title || subtitle);
   const [cursorPosition, setCursorPosition] = useState({ x: -100, y: -100 });
-  const [calibrationReady, setCalibrationReady] = useState(false);
+  const [calibrationReady, setCalibrationReady] = useState(readCalibrationReady);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [showCalibrationAlert, setShowCalibrationAlert] = useState(false);
 
@@ -96,13 +105,7 @@ export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) 
 
   useEffect(() => {
     const syncCalibrationReady = () => {
-      try {
-        const record = testEyeTrackerStorage.readCalibrationRecord();
-        const ready = Boolean(record?.calibration);
-        setCalibrationReady(ready);
-      } catch {
-        setCalibrationReady(false);
-      }
+      setCalibrationReady(readCalibrationReady());
     };
 
     syncCalibrationReady();
@@ -119,8 +122,11 @@ export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) 
     if (mockEnabled) return;
     if (calibrationReady) return;
 
-    setMockEnabled(true);
-  }, [calibrationReady, mockEnabled, setMockEnabled]);
+    setMockModeState({
+      mockEnabled: true,
+      requiresCalibration: false,
+    });
+  }, [calibrationReady, mockEnabled, setMockModeState]);
 
   useEffect(() => {
     if (!mockEnabled) return;
@@ -198,12 +204,23 @@ export function ModeGridScreen({ cards, title, subtitle }: ModeGridScreenProps) 
   }, [activeCardId, cardById, gazeControlEnabled, router]);
 
   const handleToggleMockMode = () => {
-    if (mockEnabled && (!calibrationReady || !gazeState.livePreviewSocketRouteReady || !gazeState.tokenAuthorizationReady)) {
-      setShowCalibrationAlert(true);
+    if (mockEnabled) {
+      if (requiresCalibration || !calibrationReady) {
+        setShowCalibrationAlert(true);
+        return;
+      }
+
+      setMockModeState({
+        mockEnabled: false,
+        requiresCalibration: false,
+      });
       return;
     }
 
-    toggleMockMode();
+    setMockModeState({
+      mockEnabled: true,
+      requiresCalibration: true,
+    });
   };
 
   return (

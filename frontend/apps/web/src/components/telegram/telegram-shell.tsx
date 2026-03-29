@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { BadgeCheck } from "lucide-react";
+import { BadgeCheck, TriangleAlert } from "lucide-react";
+import { testEyeTrackerStorage } from "@workspace/ui/lib/gaze-core-widget-storage";
 
 import { useMockMode } from "@/hooks/use-mock-mode";
 import { useSession } from "@/lib/auth-client";
@@ -19,12 +21,39 @@ type TelegramShellProps = {
   children: ReactNode;
 };
 
+function readCalibrationReady() {
+  try {
+    const record = testEyeTrackerStorage.readCalibrationRecord();
+    return Boolean(record?.calibration);
+  } catch {
+    return false;
+  }
+}
+
 export function TelegramShell({
   children,
 }: TelegramShellProps) {
-  const { mockEnabled, toggleMockMode } = useMockMode(true);
+  const { mockEnabled, requiresCalibration, setMockModeState } = useMockMode();
   const { data: session } = useSession();
+  const router = useRouter();
   const [cursorPosition, setCursorPosition] = useState({ x: -100, y: -100 });
+  const [calibrationReady, setCalibrationReady] = useState(readCalibrationReady);
+  const [showCalibrationAlert, setShowCalibrationAlert] = useState(false);
+
+  useEffect(() => {
+    const syncCalibrationReady = () => {
+      setCalibrationReady(readCalibrationReady());
+    };
+
+    syncCalibrationReady();
+    window.addEventListener("storage", syncCalibrationReady);
+    window.addEventListener("focus", syncCalibrationReady);
+
+    return () => {
+      window.removeEventListener("storage", syncCalibrationReady);
+      window.removeEventListener("focus", syncCalibrationReady);
+    };
+  }, []);
 
   useEffect(() => {
     const updateCursorPosition = (event: MouseEvent) => {
@@ -36,6 +65,26 @@ export function TelegramShell({
       window.removeEventListener("mousemove", updateCursorPosition);
     };
   }, []);
+
+  const handleToggleMockMode = () => {
+    if (mockEnabled) {
+      if (requiresCalibration || !calibrationReady) {
+        setShowCalibrationAlert(true);
+        return;
+      }
+
+      setMockModeState({
+        mockEnabled: false,
+        requiresCalibration: false,
+      });
+      return;
+    }
+
+    setMockModeState({
+      mockEnabled: true,
+      requiresCalibration: true,
+    });
+  };
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-black text-zinc-100">
@@ -68,7 +117,7 @@ export function TelegramShell({
 
             <button
               type="button"
-              onClick={toggleMockMode}
+              onClick={handleToggleMockMode}
               className={cn(
                 "inline-flex min-w-28 items-center justify-center rounded-xl px-5 py-2 text-sm font-semibold transition-all",
                 mockEnabled
@@ -81,6 +130,42 @@ export function TelegramShell({
           </div>
         </div>
       </div>
+
+      {showCalibrationAlert && (
+        <div className="fixed inset-0 z-90 flex items-center justify-center bg-black/60 px-4 backdrop-blur-[1px]">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+            <div className="mb-3 flex items-start gap-2 text-zinc-100">
+              <TriangleAlert className="mt-0.5 size-5 text-amber-300" />
+              <div>
+                <p className="font-semibold">Calibration required</p>
+                <p className="mt-1 text-sm text-zinc-300">
+                  You have to calibrate first before turning mock mode off and using eye-tracker navigation.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCalibrationAlert(false)}
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:border-zinc-500"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCalibrationAlert(false);
+                  router.push("/setup?tab=calibration");
+                }}
+                className="rounded-xl border border-zinc-300 bg-zinc-100 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-white"
+              >
+                Open Calibration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
