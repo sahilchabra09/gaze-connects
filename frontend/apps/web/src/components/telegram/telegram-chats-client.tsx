@@ -157,9 +157,6 @@ export function TelegramChatsClient({
           return;
         }
 
-        setAuthStatus(null);
-        setContacts([]);
-        setChats([]);
         setError(
           isTelegramRequestError(requestError)
             ? {

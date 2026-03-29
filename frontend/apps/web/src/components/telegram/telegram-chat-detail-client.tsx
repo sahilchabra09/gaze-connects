@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   MessageSquare,
   RefreshCcw,
+  RotateCcw,
   Send,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -225,7 +226,9 @@ export function TelegramChatDetailClient({
   const [openingChat, setOpeningChat] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState(initialError?.message ?? "");
+  const [openChatRetryNonce, setOpenChatRetryNonce] = useState(0);
   const latestReplyRequestId = useRef(0);
+  const attemptedOpenKeyRef = useRef<string | null>(null);
 
   async function refreshReplyOptions(options?: {
     chatId?: string;
@@ -275,7 +278,7 @@ export function TelegramChatDetailClient({
     ready: (nextStatus) => setAuthStatus(nextStatus),
     auth_state: (nextStatus) => setAuthStatus(nextStatus),
     chat_opened: (event) => {
-      if (event.contact.id !== contact?.id) {
+      if (event.contact.id !== contactId) {
         return;
       }
 
@@ -283,11 +286,11 @@ export function TelegramChatDetailClient({
       setChat(event.chat);
     },
     contact_updated: (event) => {
-      if (event.contact && event.contact.id === contact?.id) {
+      if (event.contact && event.contact.id === contactId) {
         setContact(event.contact);
       }
 
-      if (event.action === "deleted" && event.contactId === contact?.id) {
+      if (event.action === "deleted" && event.contactId === contactId) {
         setError("This contact was removed from the approved Telegram list.");
       }
     },
@@ -316,7 +319,7 @@ export function TelegramChatDetailClient({
   const replySlots = Array.from({ length: 3 }, (_, index) => aiReplyOptions[index] ?? null);
 
   useEffect(() => {
-    if (appAuthRequired || contact || chat || openingChat) {
+    if (appAuthRequired || contact || chat) {
       return;
     }
 
@@ -324,11 +327,17 @@ export function TelegramChatDetailClient({
       return;
     }
 
+    const openKey = `${contactId}:${openChatRetryNonce}`;
+    if (attemptedOpenKeyRef.current === openKey) {
+      return;
+    }
+
+    attemptedOpenKeyRef.current = openKey;
+
     let cancelled = false;
 
     async function recoverChat() {
       setOpeningChat(true);
-      setError("");
 
       try {
         const openChat = await telegramClient.openChat(contactId);
@@ -370,11 +379,26 @@ export function TelegramChatDetailClient({
     return () => {
       cancelled = true;
     };
-  }, [appAuthRequired, authStatus?.authState, chat, contact, contactId, openingChat]);
+  }, [appAuthRequired, authStatus?.authState, chat, contact, contactId, openChatRetryNonce]);
+
+  useEffect(() => {
+    attemptedOpenKeyRef.current = null;
+    setOpenChatRetryNonce(0);
+  }, [contactId]);
 
   function openHistoryModal() {
     setHistoryPage(historyTotalPages - 1);
     setHistoryOpen(true);
+  }
+
+  function handleRetryOpenChat() {
+    if (openingChat) {
+      return;
+    }
+
+    setNotice("");
+    setError("");
+    setOpenChatRetryNonce((previous) => previous + 1);
   }
 
   async function handleRetry() {
@@ -418,13 +442,13 @@ export function TelegramChatDetailClient({
   }
 
   if (appAuthRequired || (!chat || !contact)) {
-    const actionLabel = appAuthRequired ? "Sign In" : "Connect";
+    const actionLabel = appAuthRequired ? "Sign In" : openingChat ? "Opening" : "Retry Open";
     const actionSubtitle = appAuthRequired
       ? "Open the main app auth flow."
       : openingChat
-        ? "Opening this chat now that Telegram is authenticated."
-        : "Finish Telegram connect/auth first.";
-    const actionHref = appAuthRequired ? "/auth" : "/messaging/connect";
+        ? "Opening this approved chat now that Telegram is authenticated."
+        : "Try the approved chat open flow again.";
+    const actionHref = appAuthRequired ? "/auth" : undefined;
 
     return (
       <TelegramShell
@@ -437,8 +461,11 @@ export function TelegramChatDetailClient({
           <TelegramCard
             label={openingChat ? "Opening" : actionLabel}
             subtitle={actionSubtitle}
-            icon={openingChat ? <LoaderCircle className="size-5 animate-spin" /> : <Bot className="size-5" />}
+            icon={
+              openingChat ? <LoaderCircle className="size-5 animate-spin" /> : appAuthRequired ? <Bot className="size-5" /> : <RotateCcw className="size-5" />
+            }
             href={openingChat ? undefined : actionHref}
+            onClick={!appAuthRequired ? handleRetryOpenChat : undefined}
             disabled={openingChat}
           />
           <TelegramCard

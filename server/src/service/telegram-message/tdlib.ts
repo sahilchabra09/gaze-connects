@@ -1208,6 +1208,7 @@ export class TelegramClientManager {
   }
 
   private async applyAuthorizationState(runtime: PatientRuntime, state: TdObject): Promise<void> {
+    const previousSnapshot = this.serializeRuntime(runtime);
     const previousAuthState = runtime.authState;
     runtime.authState = mapAuthorizationState(state);
 
@@ -1221,6 +1222,16 @@ export class TelegramClientManager {
     } else if (state._ === "authorizationStateClosed" || state._ === "authorizationStateClosing") {
       runtime.telegramUserId = null;
       runtime.connectedAt = null;
+    }
+
+    const nextSnapshot = this.serializeRuntime(runtime);
+    if (
+      previousSnapshot.authState === nextSnapshot.authState
+      && previousSnapshot.telegramUserId === nextSnapshot.telegramUserId
+      && previousSnapshot.connectedAt === nextSnapshot.connectedAt
+      && previousSnapshot.sessionPath === nextSnapshot.sessionPath
+    ) {
+      return;
     }
 
     await this.persistRuntime(runtime);
