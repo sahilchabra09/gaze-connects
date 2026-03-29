@@ -46,13 +46,25 @@ async function getRequestHeaders(initHeaders?: HeadersInit) {
 }
 
 async function telegramServerFetch<T>(pathname: string, init?: RequestInit) {
-  const response = await fetch(new URL(pathname, getRequiredBackendBaseURL()), {
-    ...init,
-    headers: await getRequestHeaders(init?.headers),
-    cache: "no-store",
-  });
+  try {
+    const response = await fetch(new URL(pathname, getRequiredBackendBaseURL()), {
+      ...init,
+      headers: await getRequestHeaders(init?.headers),
+      cache: "no-store",
+    });
 
-  return parseTelegramResponse<T>(response);
+    return parseTelegramResponse<T>(response);
+  } catch (error) {
+    if (error instanceof TelegramRequestError) {
+      throw error;
+    }
+
+    throw new TelegramRequestError(
+      503,
+      "BACKEND_UNREACHABLE",
+      "Could not reach the backend service. Ensure the server is running and NEXT_PUBLIC_BETTER_AUTH_URL points to it.",
+    );
+  }
 }
 
 export async function safeTelegramServerCall<T>(operation: () => Promise<T>) {
@@ -62,14 +74,17 @@ export async function safeTelegramServerCall<T>(operation: () => Promise<T>) {
       error: null,
     };
   } catch (error) {
-    if (error instanceof TelegramRequestError) {
-      return {
-        data: null,
-        error,
-      };
-    }
-
-    throw error;
+    return {
+      data: null,
+      error:
+        error instanceof TelegramRequestError
+          ? error
+          : new TelegramRequestError(
+              500,
+              "TELEGRAM_SERVER_FETCH_FAILED",
+              "Failed to load Telegram data.",
+            ),
+    };
   }
 }
 

@@ -44,7 +44,7 @@ export function TelegramConnectClient({
 
   const appAuthRequired = !authStatus && initialError?.status === 401;
   const canSubmitPhone = !busy && phoneNumber.trim().length >= 8;
-  const canSubmitCode = !busy && code.trim().length >= 1;
+  const canSubmitCode = !busy && code.trim().length >= 1 && authStatus?.authState === "waiting_code";
 
   async function handleStartAuth() {
     if (!canSubmitPhone) {
@@ -58,7 +58,13 @@ export function TelegramConnectClient({
     try {
       const nextStatus = await telegramClient.startAuth(phoneNumber.trim());
       setAuthStatus(nextStatus);
-      setMessage("Phone number accepted. Enter the Telegram verification code.");
+      setMessage(
+        nextStatus.authState === "waiting_code"
+          ? "Phone number accepted. Enter the Telegram verification code."
+          : nextStatus.authState === "authenticated"
+            ? "Telegram is already connected. No verification code was requested."
+            : `Telegram auth state: ${nextStatus.authState}.`,
+      );
     } catch (requestError) {
       setError(
         isTelegramRequestError(requestError) ? requestError.message : "Telegram auth could not be started.",
@@ -99,6 +105,16 @@ export function TelegramConnectClient({
       connectionState={connectionState}
     >
       <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-3">
+        <div className="flex items-center justify-start">
+          <Link
+            href="/messaging"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 text-sm font-semibold text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-800"
+          >
+            <ArrowLeft className="size-4" />
+            Back
+          </Link>
+        </div>
+
         {message ? (
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
             {message}

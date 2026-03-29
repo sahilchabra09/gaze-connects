@@ -1,9 +1,9 @@
 import { Elysia, t } from "elysia";
 import { auth } from "@/lib/auth";
 import { logger, serializeError } from "@/lib/logger";
+import { telegramAiReplyService } from "@/service/telegram-message/ai-replies";
 import { contactService } from "@/service/telegram-message/contact-service";
 import { isTelegramDomainError } from "@/service/telegram-message/errors";
-import { STATIC_REPLY_OPTIONS } from "@/service/telegram-message/reply-options";
 import { telegramSchemas } from "@/service/telegram-message/schemas";
 import { telegramSseBroker } from "@/service/telegram-message/sse-broker";
 import { telegramClientManager } from "@/service/telegram-message/tdlib";
@@ -30,6 +30,20 @@ function handleTelegramError(
     logger.warn({ ...context, error: serializeError(error) }, "telegram route domain error");
     set.status = error.status;
     return errorResponse(error.code, error.message);
+  }
+
+  if (error && typeof error === "object") {
+    const rawCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+    const code = typeof rawCode === "number" ? rawCode : Number(rawCode);
+    const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+
+    if (code === 406 && message.includes("AUTH_KEY_DUPLICATED")) {
+      set.status = 409;
+      return errorResponse(
+        "TELEGRAM_AUTH_KEY_DUPLICATED",
+        "Telegram session was opened in another client. Reconnect Telegram and try again",
+      );
+    }
   }
 
   logger.error({ ...context, error: serializeError(error) }, "telegram route failed");
@@ -375,8 +389,7 @@ export const telegramRoutes = new Elysia({
       }
 
       try {
-        await contactService.getActiveByChatId(user.id, params.chatId);
-        return STATIC_REPLY_OPTIONS;
+        return await telegramAiReplyService.list(user.id, params.chatId);
       } catch (error) {
         return handleTelegramError(set, error);
       }

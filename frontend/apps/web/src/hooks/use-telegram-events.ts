@@ -13,6 +13,9 @@ const TELEGRAM_EVENT_TYPES: TelegramEventType[] = [
   "chat_opened",
   "message_new",
   "message_sent",
+  "necessity_request_created",
+  "necessity_request_acknowledged",
+  "necessity_request_escalated",
 ];
 
 type TelegramEventHandlers = {

@@ -87,13 +87,20 @@ function isSnapshotTimeout(status: number, message: string) {
 }
 
 function getCurrentViewportSize() {
+  if (typeof window === "undefined") {
+    return { width: 1280, height: 720 }
+  }
+
+  const documentWidth = typeof document !== "undefined" ? document.documentElement.clientWidth : 1
+  const documentHeight = typeof document !== "undefined" ? document.documentElement.clientHeight : 1
+
   const width = Math.max(
     1,
-    Math.round(window.visualViewport?.width ?? window.innerWidth ?? document.documentElement.clientWidth ?? 1),
+    Math.round(window.visualViewport?.width ?? window.innerWidth ?? documentWidth ?? 1),
   )
   const height = Math.max(
     1,
-    Math.round(window.visualViewport?.height ?? window.innerHeight ?? document.documentElement.clientHeight ?? 1),
+    Math.round(window.visualViewport?.height ?? window.innerHeight ?? documentHeight ?? 1),
   )
 
   return { width, height }
@@ -122,7 +129,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
   const [calibrating, setCalibrating] = useState(false)
   const [calibIndex, setCalibIndex] = useState(0)
   const [calibrationGrid, setCalibrationGrid] = useState<[number, number][]>([])
-  const [calibrationViewport, setCalibrationViewport] = useState({ width: window.innerWidth, height: window.innerHeight })
+  const [calibrationViewport, setCalibrationViewport] = useState(getCurrentViewportSize)
   const [latestResult, setLatestResult] = useState<LiveResult | null>(null)
   const [livePreviewActive, setLivePreviewActive] = useState(false)
   const [livePreviewStatus, setLivePreviewStatus] = useState<LivePreviewConnectionStatus>("idle")
@@ -345,7 +352,7 @@ export function useGazeCoreSetupWidget(options: GazeCoreWidgetOptions = {}) {
       return issuedSocketUrl
     }
 
-    if (!options.backendBaseUrl?.trim() || !options.apiKey?.trim() || !options.deviceUuid?.trim()) {
+    if (!options.backendBaseUrl?.trim()) {
       return ""
     }
 

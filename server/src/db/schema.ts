@@ -148,6 +148,20 @@ export const voiceAgentCallSession = pgTable(
     latestTranscriptAt: timestamp("latest_transcript_at"),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     endedAt: timestamp("ended_at"),
+export const NECESSITY_REQUEST_STATUSES = ["pending", "acknowledged", "escalated"] as const;
+
+export const patientNecessity = pgTable(
+  "patient_necessity",
+  {
+    id: text("id").primaryKey(),
+    patientId: text("patient_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    internalMessage: text("internal_message").notNull(),
+    svgMarkup: text("svg_markup").notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    sortOrder: integer("sort_order").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -158,6 +172,43 @@ export const voiceAgentCallSession = pgTable(
     index("voice_agent_call_session_patient_idx").on(table.patientId),
     index("voice_agent_call_session_contact_idx").on(table.contactId),
     index("voice_agent_call_session_state_idx").on(table.state),
+    index("patient_necessity_patient_sort_idx").on(table.patientId, table.sortOrder),
+    index("patient_necessity_patient_active_idx").on(table.patientId, table.isActive),
+  ],
+);
+
+export const necessityRequest = pgTable(
+  "necessity_request",
+  {
+    id: text("id").primaryKey(),
+    patientId: text("patient_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    necessityId: text("necessity_id")
+      .notNull()
+      .references(() => patientNecessity.id, { onDelete: "cascade" }),
+    caretakerContactId: text("caretaker_contact_id")
+      .notNull()
+      .references(() => patientContact.id, { onDelete: "cascade" }),
+    telegramChatId: text("telegram_chat_id").notNull(),
+    labelSnapshot: text("label_snapshot").notNull(),
+    messageSnapshot: text("message_snapshot").notNull(),
+    status: text("status").notNull().$type<(typeof NECESSITY_REQUEST_STATUSES)[number]>(),
+    telegramMessageId: text("telegram_message_id"),
+    triggeredAt: timestamp("triggered_at").defaultNow().notNull(),
+    acknowledgedAt: timestamp("acknowledged_at"),
+    escalatedAt: timestamp("escalated_at"),
+    escalateAfterSeconds: integer("escalate_after_seconds").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("necessity_request_patient_status_idx").on(table.patientId, table.status),
+    index("necessity_request_patient_chat_status_idx").on(table.patientId, table.telegramChatId, table.status),
+    index("necessity_request_triggered_idx").on(table.triggeredAt),
   ],
 );
 
@@ -165,6 +216,8 @@ export const userRelations = relations(user, ({ many, one }) => ({
   sessions: many(session),
   accounts: many(account),
   patientContacts: many(patientContact),
+  patientNecessities: many(patientNecessity),
+  necessityRequests: many(necessityRequest),
   patientTelegramSession: one(patientTelegramSession, {
     fields: [user.id],
     references: [patientTelegramSession.patientId],
@@ -199,6 +252,7 @@ export const patientContactRelations = relations(patientContact, ({ one }) => ({
   }),
 }));
 
+<<<<<<< HEAD
 export const voiceAgentCallSessionRelations = relations(voiceAgentCallSession, ({ one }) => ({
   patient: one(user, {
     fields: [voiceAgentCallSession.patientId],
@@ -206,6 +260,27 @@ export const voiceAgentCallSessionRelations = relations(voiceAgentCallSession, (
   }),
   contact: one(patientContact, {
     fields: [voiceAgentCallSession.contactId],
+=======
+export const patientNecessityRelations = relations(patientNecessity, ({ one, many }) => ({
+  patient: one(user, {
+    fields: [patientNecessity.patientId],
+    references: [user.id],
+  }),
+  requests: many(necessityRequest),
+}));
+
+export const necessityRequestRelations = relations(necessityRequest, ({ one }) => ({
+  patient: one(user, {
+    fields: [necessityRequest.patientId],
+    references: [user.id],
+  }),
+  necessity: one(patientNecessity, {
+    fields: [necessityRequest.necessityId],
+    references: [patientNecessity.id],
+  }),
+  caretakerContact: one(patientContact, {
+    fields: [necessityRequest.caretakerContactId],
+>>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
     references: [patientContact.id],
   }),
 }));

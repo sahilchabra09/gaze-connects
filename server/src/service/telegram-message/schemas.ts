@@ -134,6 +134,6 @@ export const telegramSchemas = {
     id: t.String(),
     label: t.String(),
     text: t.String(),
-    source: t.Literal("static"),
+    source: t.Literal("ai-telegram"),
   }),
 } as const;

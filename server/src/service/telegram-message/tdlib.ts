@@ -6,6 +6,7 @@ import * as tdl from "tdl";
 import { db } from "@/db";
 import { patientTelegramSession } from "@/db/schema";
 import { logger, serializeError } from "@/lib/logger";
+import { necessityService } from "@/service/necessity/service";
 import { contactService } from "./contact-service";
 import { telegramConfig, ensureTelegramStorage } from "./config";
 import { TelegramDomainError } from "./errors";
@@ -190,6 +191,18 @@ function isTdlibWrongDatabaseEncryptionKey(error: unknown): boolean {
   return message.includes("Wrong database encryption key");
 }
 
+function isTdlibAuthKeyDuplicated(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const rawCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+  const code = typeof rawCode === "number" ? rawCode : Number(rawCode);
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+
+  return code === 406 && message.includes("AUTH_KEY_DUPLICATED");
+}
+
 function mapTdlibAuthError(error: unknown): TelegramDomainError | null {
   if (!error || typeof error !== "object") {
     return null;
@@ -211,6 +224,28 @@ function mapTdlibAuthError(error: unknown): TelegramDomainError | null {
     return new TelegramDomainError("TELEGRAM_PHONE_INVALID", 400, "Telegram phone number is invalid");
   }
 
+  if (
+    message.includes("Call to setAuthenticationPhoneNumber unexpected") ||
+    message.includes("setAuthenticationPhoneNumber unexpected")
+  ) {
+    return new TelegramDomainError(
+      "TELEGRAM_AUTH_ALREADY_IN_PROGRESS",
+      409,
+      "Telegram authentication is already in progress. Enter the verification code or refresh auth status.",
+    );
+  }
+
+  if (
+    message.includes("Call to checkAuthenticationCode unexpected") ||
+    message.includes("checkAuthenticationCode unexpected")
+  ) {
+    return new TelegramDomainError(
+      "TELEGRAM_CODE_NOT_REQUESTED",
+      409,
+      "Telegram is not waiting for a verification code. Refresh auth status before entering a code.",
+    );
+  }
+
   if (message.includes("PHONE_NUMBER_FLOOD") || message.includes("FLOOD_WAIT") || code === 429) {
     return new TelegramDomainError("TELEGRAM_RATE_LIMIT", 429, "Too many Telegram attempts. Please try again later");
   }
@@ -221,6 +256,14 @@ function mapTdlibAuthError(error: unknown): TelegramDomainError | null {
 
   if (message.includes("Wrong database encryption key")) {
     return new TelegramDomainError("TELEGRAM_ENCRYPTION_KEY_MISMATCH", 409, "Telegram session data was encrypted with a different key. Reset the Telegram session and authenticate again");
+  }
+
+  if (isTdlibAuthKeyDuplicated(error)) {
+    return new TelegramDomainError(
+      "TELEGRAM_AUTH_KEY_DUPLICATED",
+      409,
+      "Telegram session was opened in another client. Reconnect Telegram and try again",
+    );
   }
 
   return null;
@@ -249,6 +292,7 @@ export class TelegramClientManager {
   private readonly runtimeInitializations = new Map<string, Promise<PatientRuntime>>();
   private readonly runtimeWarmups = new Map<string, Promise<void>>();
   private readonly keyMismatchPatients = new Set<string>();
+  private readonly authKeyDuplicatedPatients = new Set<string>();
   private initialization: Promise<void> | null = null;
 
   async initialize(): Promise<void> {
@@ -297,6 +341,10 @@ export class TelegramClientManager {
   }
 
   async warmUpForUser(patientId: string): Promise<void> {
+    if (this.authKeyDuplicatedPatients.has(patientId)) {
+      return;
+    }
+
     if (this.runtimes.has(patientId) && !this.runtimeInitializations.has(patientId)) {
       return;
     }
@@ -328,15 +376,29 @@ export class TelegramClientManager {
   }
 
   async startAuthentication(patientId: string, phoneNumber: string): Promise<TelegramRuntimeStatus> {
+    this.authKeyDuplicatedPatients.delete(patientId);
     const runtime = await this.ensureRuntime(patientId);
     const normalizedPhoneNumber = toTelegramPhoneNumber(phoneNumber);
+
+    const statusBefore = await this.refreshRuntimeState(patientId);
+    if (statusBefore.authState === "authenticated" || statusBefore.authState === "waiting_code") {
+      return statusBefore;
+    }
+
+    if (statusBefore.authState === "waiting_password") {
+      throw new TelegramDomainError(
+        "TELEGRAM_2FA_UNSUPPORTED",
+        409,
+        "Telegram accounts with 2-step password are not supported in this version",
+      );
+    }
 
     logger.info(
       {
         operation: "telegram.start-auth",
         patientId,
         sessionPath: runtime.sessionPath,
-        authStateBefore: runtime.authState,
+        authStateBefore: statusBefore.authState,
         phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
       },
       "starting telegram phone authentication",
@@ -349,6 +411,16 @@ export class TelegramClientManager {
       } as any);
     } catch (error) {
       const mappedError = mapTdlibAuthError(error);
+      if (mappedError?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.start-auth",
+        );
+        throw mappedError;
+      }
+
       if (mappedError?.code === "TELEGRAM_INITIALIZING") {
         const hasKeyMismatch =
           this.keyMismatchPatients.has(patientId) || (await this.waitForKeyMismatchSignal(patientId));
@@ -378,6 +450,16 @@ export class TelegramClientManager {
           } as any);
         } catch (retryError) {
           const retryMappedError = mapTdlibAuthError(retryError);
+          if (retryMappedError?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+            await this.markRuntimeExpiredOnAuthKeyDuplication(
+              patientId,
+              recreatedRuntime.sessionPath,
+              retryError,
+              "telegram.start-auth.retry",
+            );
+            throw retryMappedError;
+          }
+
           const retryHasKeyMismatch =
             this.keyMismatchPatients.has(patientId) ||
             isTdlibWrongDatabaseEncryptionKey(retryError) ||
@@ -405,6 +487,16 @@ export class TelegramClientManager {
               } as any);
             } catch (resetRetryError) {
               const resetRetryMappedError = mapTdlibAuthError(resetRetryError);
+              if (resetRetryMappedError?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+                await this.markRuntimeExpiredOnAuthKeyDuplication(
+                  patientId,
+                  resetRuntime.sessionPath,
+                  resetRetryError,
+                  "telegram.start-auth.reset-retry",
+                );
+                throw resetRetryMappedError;
+              }
+
               if (resetRetryMappedError) {
                 throw resetRetryMappedError;
               }
@@ -486,14 +578,32 @@ export class TelegramClientManager {
   }
 
   async verifyCode(patientId: string, code: string): Promise<TelegramRuntimeStatus> {
+    this.authKeyDuplicatedPatients.delete(patientId);
     const runtime = await this.ensureRuntime(patientId);
+    const statusBefore = await this.refreshRuntimeState(patientId);
+
+    if (statusBefore.authState === "authenticated") {
+      throw new TelegramDomainError(
+        "TELEGRAM_ALREADY_CONNECTED",
+        409,
+        "Telegram is already connected. No verification code is required.",
+      );
+    }
+
+    if (statusBefore.authState !== "waiting_code") {
+      throw new TelegramDomainError(
+        "TELEGRAM_CODE_NOT_REQUESTED",
+        409,
+        "Telegram is not waiting for a verification code. Start auth and wait for the code step first.",
+      );
+    }
 
     logger.info(
       {
         operation: "telegram.verify-code",
         patientId,
         sessionPath: runtime.sessionPath,
-        authStateBefore: runtime.authState,
+        authStateBefore: statusBefore.authState,
         codeLength: code.length,
       },
       "verifying telegram authentication code",
@@ -506,6 +616,16 @@ export class TelegramClientManager {
       } as any);
     } catch (error) {
       const mappedError = mapTdlibAuthError(error);
+      if (mappedError?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.verify-code",
+        );
+        throw mappedError;
+      }
+
       if (mappedError) {
         throw mappedError;
       }
@@ -515,7 +635,7 @@ export class TelegramClientManager {
           operation: "telegram.verify-code",
           patientId,
           sessionPath: runtime.sessionPath,
-          authStateBefore: runtime.authState,
+          authStateBefore: statusBefore.authState,
           codeLength: code.length,
           error: serializeError(error),
         },
@@ -618,14 +738,34 @@ export class TelegramClientManager {
     await contactService.getActiveByChatId(patientId, chatId);
     const tdlibChatId = toTdlibId(chatId, "chat");
 
-    const history = (await runtime.client.invoke({
-      _: "getChatHistory",
-      chat_id: tdlibChatId,
-      from_message_id: fromMessageId ?? 0,
-      offset: 0,
-      limit,
-      only_local: false,
-    } as any)) as { messages?: unknown[] };
+    let history: { messages?: unknown[] };
+    try {
+      history = (await runtime.client.invoke({
+        _: "getChatHistory",
+        chat_id: tdlibChatId,
+        from_message_id: fromMessageId ?? 0,
+        offset: 0,
+        limit,
+        only_local: false,
+      } as any)) as { messages?: unknown[] };
+    } catch (error) {
+      const mapped = mapTdlibAuthError(error);
+      if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          runtime.patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.get-messages",
+        );
+        throw mapped;
+      }
+
+      if (mapped) {
+        throw mapped;
+      }
+
+      throw error;
+    }
 
     const messages = history.messages ?? [];
     return messages.map((message: unknown) => toChatMessage(message as TdMessage));
@@ -637,28 +777,96 @@ export class TelegramClientManager {
     text: string,
   ): Promise<ChatMessage> {
     const runtime = await this.ensureAuthenticatedRuntime(patientId);
-    const contact = await contactService.getActiveByChatId(patientId, chatId);
-    const tdlibChatId = toTdlibId(chatId, "chat");
+    let contact = await contactService.getActiveByChatId(patientId, chatId);
+    let targetChatId = chatId;
 
-    const sent = (await runtime.client.invoke({
-      _: "sendMessage",
-      chat_id: tdlibChatId,
-      input_message_content: {
-        _: "inputMessageText",
-        text: {
-          _: "formattedText",
-          text,
-          entities: [],
+    const invokeSend = async (resolvedChatId: string): Promise<TdMessage> => {
+      return (await runtime.client.invoke({
+        _: "sendMessage",
+        chat_id: toTdlibId(resolvedChatId, "chat"),
+        input_message_content: {
+          _: "inputMessageText",
+          text: {
+            _: "formattedText",
+            text,
+            entities: [],
+          },
+          clear_draft: true,
         },
-        clear_draft: true,
-      },
-    } as any)) as TdMessage;
+      } as any)) as TdMessage;
+    };
+
+    let sent: TdMessage;
+    try {
+      sent = await invokeSend(targetChatId);
+    } catch (error) {
+      const mapped = mapTdlibAuthError(error);
+      if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          runtime.patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.send-message",
+        );
+        throw mapped;
+      }
+
+      if (mapped) {
+        throw mapped;
+      }
+
+      if (isTdlibNotFound(error)) {
+        logger.warn(
+          {
+            patientId,
+            contactId: contact.id,
+            chatId: targetChatId,
+            error: serializeError(error),
+          },
+          "stored telegram chat id not found during send; resolving fresh chat mapping and retrying",
+        );
+
+        contact = await this.resolveContactChat(runtime, contact);
+        targetChatId = contact.telegramChatId!;
+
+        try {
+          sent = await invokeSend(targetChatId);
+        } catch (retryError) {
+          const retryMapped = mapTdlibAuthError(retryError);
+          if (retryMapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+            await this.markRuntimeExpiredOnAuthKeyDuplication(
+              runtime.patientId,
+              runtime.sessionPath,
+              retryError,
+              "telegram.send-message.retry",
+            );
+            throw retryMapped;
+          }
+
+          if (retryMapped) {
+            throw retryMapped;
+          }
+
+          if (isTdlibNotFound(retryError)) {
+            throw new TelegramDomainError(
+              "CONTACT_NOT_ON_TELEGRAM",
+              404,
+              "Saved contact is not available on Telegram",
+            );
+          }
+
+          throw retryError;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     const mapped = toChatMessage(sent as TdMessage);
-    const chat = await this.fetchChatSummary(runtime, contact, chatId);
+    const chat = await this.fetchChatSummary(runtime, contact, targetChatId);
 
     telegramSseBroker.publish(patientId, "message_sent", {
-      chatId,
+      chatId: targetChatId,
       message: mapped,
       chat,
     });
@@ -679,6 +887,27 @@ export class TelegramClientManager {
       );
 
     for (const session of sessions) {
+      if (session.authState === "authenticated" && !session.telegramUserId) {
+        logger.warn(
+          {
+            patientId: session.patientId,
+            sessionPath: session.sessionPath,
+          },
+          "skipping invalid persisted telegram session with authenticated state but missing telegram user id",
+        );
+
+        await db
+          .update(patientTelegramSession)
+          .set({
+            authState: "expired",
+            connectedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(patientTelegramSession.patientId, session.patientId));
+
+        continue;
+      }
+
       try {
         await this.ensureRuntime(session.patientId, { skipInitialize: true });
       } catch (error) {
@@ -747,12 +976,28 @@ export class TelegramClientManager {
       };
 
       client.on("update", (update: unknown) => {
-        void this.handleUpdate(patientId, update as TdObject);
+        void this.handleUpdate(patientId, update as TdObject).catch((error) => {
+          void this.handleBackgroundTdlibError(patientId, sessionPath, error, "tdlib.update");
+        });
       });
 
       client.on("error", (error: unknown) => {
         if (isTdlibWrongDatabaseEncryptionKey(error)) {
           this.keyMismatchPatients.add(patientId);
+        }
+
+        if (isTdlibAuthKeyDuplicated(error)) {
+          void this.markRuntimeExpiredOnAuthKeyDuplication(patientId, sessionPath, error, "tdlib.client.error").catch((markError) => {
+            logger.warn(
+              {
+                patientId,
+                sessionPath,
+                error: serializeError(markError),
+              },
+              "failed to mark runtime expired after AUTH_KEY_DUPLICATED in tdlib client error callback",
+            );
+          });
+          return;
         }
 
         logger.error(
@@ -811,6 +1056,7 @@ export class TelegramClientManager {
     await this.disposeRuntime(patientId);
     await rm(sessionPath, { recursive: true, force: true });
     this.keyMismatchPatients.delete(patientId);
+    this.authKeyDuplicatedPatients.delete(patientId);
 
     logger.warn({ patientId, sessionPath }, "cleared telegram session storage due to encryption key mismatch");
   }
@@ -833,8 +1079,37 @@ export class TelegramClientManager {
   }
 
   private async ensureAuthenticatedRuntime(patientId: string): Promise<PatientRuntime> {
+    if (this.authKeyDuplicatedPatients.has(patientId)) {
+      throw new TelegramDomainError(
+        "TELEGRAM_AUTH_KEY_DUPLICATED",
+        409,
+        "Telegram session was opened in another client. Reconnect Telegram and try again",
+      );
+    }
+
     const runtime = await this.ensureRuntime(patientId);
-    const status = await this.refreshRuntimeState(patientId);
+    let status: TelegramRuntimeStatus;
+
+    try {
+      status = await this.refreshRuntimeState(patientId);
+    } catch (error) {
+      const mapped = mapTdlibAuthError(error);
+      if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.ensure-authenticated-runtime",
+        );
+        throw mapped;
+      }
+
+      if (mapped) {
+        throw mapped;
+      }
+
+      throw error;
+    }
 
     if (status.authState === "waiting_password") {
       throw new TelegramDomainError(
@@ -1037,12 +1312,129 @@ export class TelegramClientManager {
   ): Promise<ChatSummary> {
     const tdlibChatId = toTdlibId(chatId, "chat");
 
-    const chat = (await runtime.client.invoke({
-      _: "getChat",
-      chat_id: tdlibChatId,
-    } as any)) as TdChat;
+    let chat: TdChat;
+    try {
+      chat = (await runtime.client.invoke({
+        _: "getChat",
+        chat_id: tdlibChatId,
+      } as any)) as TdChat;
+    } catch (error) {
+      const mapped = mapTdlibAuthError(error);
+      if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+        await this.markRuntimeExpiredOnAuthKeyDuplication(
+          runtime.patientId,
+          runtime.sessionPath,
+          error,
+          "telegram.fetch-chat-summary",
+        );
+        throw mapped;
+      }
+
+      if (mapped) {
+        throw mapped;
+      }
+
+      throw error;
+    }
 
     return toChatSummary(chat, contact);
+  }
+
+  private async markRuntimeExpiredOnAuthKeyDuplication(
+    patientId: string,
+    sessionPath: string,
+    error: unknown,
+    operation: string,
+  ): Promise<void> {
+    const runtime = this.runtimes.get(patientId);
+    if (!runtime) {
+      return;
+    }
+
+    runtime.authState = "expired";
+    runtime.telegramUserId = null;
+    runtime.connectedAt = null;
+    this.authKeyDuplicatedPatients.add(patientId);
+
+    try {
+      await this.persistRuntime(runtime);
+    } catch (persistError) {
+      logger.warn(
+        {
+          operation,
+          patientId,
+          sessionPath,
+          error: serializeError(persistError),
+        },
+        "failed to persist telegram auth-state after AUTH_KEY_DUPLICATED",
+      );
+    }
+
+    telegramSseBroker.publish(patientId, "auth_state", this.serializeRuntime(runtime));
+
+    await this.disposeRuntime(patientId);
+
+    try {
+      await rm(sessionPath, { recursive: true, force: true });
+    } catch (rmError) {
+      logger.warn(
+        {
+          operation,
+          patientId,
+          sessionPath,
+          error: serializeError(rmError),
+        },
+        "failed to clear telegram session storage after AUTH_KEY_DUPLICATED",
+      );
+    }
+
+    logger.warn(
+      {
+        operation,
+        patientId,
+        sessionPath,
+        error: serializeError(error),
+      },
+      "telegram session expired due to AUTH_KEY_DUPLICATED; runtime disposed",
+    );
+  }
+
+  private async handleBackgroundTdlibError(
+    patientId: string,
+    sessionPath: string,
+    error: unknown,
+    operation: string,
+  ): Promise<void> {
+    const mapped = mapTdlibAuthError(error);
+    if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+      await this.markRuntimeExpiredOnAuthKeyDuplication(patientId, sessionPath, error, operation);
+      return;
+    }
+
+    if (mapped) {
+      logger.warn(
+        {
+          operation,
+          patientId,
+          sessionPath,
+          mappedCode: mapped.code,
+          mappedStatus: mapped.status,
+          error: serializeError(error),
+        },
+        "telegram background update produced mapped tdlib error",
+      );
+      return;
+    }
+
+    logger.error(
+      {
+        operation,
+        patientId,
+        sessionPath,
+        error: serializeError(error),
+      },
+      "telegram background update handler failed",
+    );
   }
 
   private async handleUpdate(patientId: string, update: TdObject): Promise<void> {
@@ -1080,6 +1472,21 @@ export class TelegramClientManager {
 
     const mapped = toChatMessage(message);
     const chat = await this.fetchChatSummary(runtime, contact, chatId);
+
+    if (!message.is_outgoing && contact.role === "caretaker") {
+      try {
+        await necessityService.acknowledgeMostRecentPendingByChat(runtime.patientId, chatId);
+      } catch (error) {
+        logger.error(
+          {
+            patientId: runtime.patientId,
+            chatId,
+            error: serializeError(error),
+          },
+          "failed to acknowledge pending necessity request from incoming caretaker message",
+        );
+      }
+    }
 
     telegramSseBroker.publish(runtime.patientId, "message_new", {
       chatId,

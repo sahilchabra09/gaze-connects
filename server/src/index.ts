@@ -1,17 +1,26 @@
 import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
-import { logger } from "./lib/logger";
+import { logger, serializeError } from "./lib/logger";
+import { necessityRoutes } from "./routes/necessity";
 import { gazeRoutes } from "./routes/gaze";
 import { applianceRoutes } from "./routes/appliance";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+<<<<<<< HEAD
 import { voiceAgentRoutes } from "./routes/voice-agent";
+=======
+import { talkRoutes } from "./routes/talk";
+import { necessityService } from "./service/necessity/service";
+>>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
 
 /**
  * GazeCore Backend - Main Server
  * Route-first architecture
  */
+const host = process.env.HOST ?? "0.0.0.0"
+const port = Number(process.env.PORT ?? 8000)
+
 const app = new Elysia()
   .use(
     swagger({
@@ -61,17 +70,31 @@ const app = new Elysia()
       // User routes: /api/users/me, /api/users/:id
       .use(applianceRoutes)
       .use(gazeRoutes)
+      .use(necessityRoutes)
       .use(telegramRoutes)
       .use(voiceAgentRoutes)
+        .use(talkRoutes)
       .use(userRoutes)
   )
-  .listen(8000);
+  .listen({
+    hostname: host,
+    port,
+  });
 
 logger.info(
   {
-    baseUrl: "http://localhost:8000",
-    authBase: "http://localhost:8000/api/auth",
-    docsUrl: "http://localhost:8000/docs",
+    baseUrl: `http://${host}:${port}`,
+    authBase: `http://${host}:${port}/api/auth`,
+    docsUrl: `http://${host}:${port}/docs`,
   },
   "GazeConnect server started"
 )
+
+void necessityService.initialize().catch((error) => {
+  logger.warn(
+    {
+      error: serializeError(error),
+    },
+    "necessity service initialization skipped; server will continue running",
+  );
+})
