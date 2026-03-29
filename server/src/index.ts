@@ -6,13 +6,10 @@ import { necessityRoutes } from "./routes/necessity";
 import { gazeRoutes } from "./routes/gaze";
 import { applianceRoutes } from "./routes/appliance";
 import { telegramRoutes } from "./routes/telegram";
-import { userRoutes } from "./routes/user";
-<<<<<<< HEAD
 import { voiceAgentRoutes } from "./routes/voice-agent";
-=======
+import { userRoutes } from "./routes/user";
 import { talkRoutes } from "./routes/talk";
 import { necessityService } from "./service/necessity/service";
->>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
 
 /**
  * GazeCore Backend - Main Server

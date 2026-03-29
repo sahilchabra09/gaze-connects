@@ -148,6 +148,19 @@ export const voiceAgentCallSession = pgTable(
     latestTranscriptAt: timestamp("latest_transcript_at"),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     endedAt: timestamp("ended_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("voice_agent_call_session_patient_idx").on(table.patientId),
+    index("voice_agent_call_session_contact_idx").on(table.contactId),
+    index("voice_agent_call_session_state_idx").on(table.state),
+  ],
+);
+
 export const NECESSITY_REQUEST_STATUSES = ["pending", "acknowledged", "escalated"] as const;
 
 export const patientNecessity = pgTable(
@@ -169,9 +182,6 @@ export const patientNecessity = pgTable(
       .notNull(),
   },
   (table) => [
-    index("voice_agent_call_session_patient_idx").on(table.patientId),
-    index("voice_agent_call_session_contact_idx").on(table.contactId),
-    index("voice_agent_call_session_state_idx").on(table.state),
     index("patient_necessity_patient_sort_idx").on(table.patientId, table.sortOrder),
     index("patient_necessity_patient_active_idx").on(table.patientId, table.isActive),
   ],
@@ -252,7 +262,6 @@ export const patientContactRelations = relations(patientContact, ({ one }) => ({
   }),
 }));
 
-<<<<<<< HEAD
 export const voiceAgentCallSessionRelations = relations(voiceAgentCallSession, ({ one }) => ({
   patient: one(user, {
     fields: [voiceAgentCallSession.patientId],
@@ -260,7 +269,10 @@ export const voiceAgentCallSessionRelations = relations(voiceAgentCallSession, (
   }),
   contact: one(patientContact, {
     fields: [voiceAgentCallSession.contactId],
-=======
+    references: [patientContact.id],
+  }),
+}));
+
 export const patientNecessityRelations = relations(patientNecessity, ({ one, many }) => ({
   patient: one(user, {
     fields: [patientNecessity.patientId],
@@ -280,7 +292,6 @@ export const necessityRequestRelations = relations(necessityRequest, ({ one }) =
   }),
   caretakerContact: one(patientContact, {
     fields: [necessityRequest.caretakerContactId],
->>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
     references: [patientContact.id],
   }),
 }));
