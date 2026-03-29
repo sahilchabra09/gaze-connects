@@ -17,9 +17,10 @@
     "better-auth": "^1.5.6",
     "drizzle-orm": "^0.45.1",
     "elysia": "latest",
-    "prebuilt-tdlib": "^0.1008052.1",
+    "mqtt": "^5.15.1",
     "pino": "^10.3.1",
     "postgres": "^3.4.8",
+    "prebuilt-tdlib": "^0.1008052.1",
     "resend": "^6.9.4",
     "tdl": "^8.0.3"
   },

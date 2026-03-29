@@ -70,6 +70,9 @@ web_modules/
 .env.*
 !.env.example
 
+# TDLib session storage
+server/tdlib-sessions/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
