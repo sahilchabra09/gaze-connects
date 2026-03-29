@@ -129,6 +129,25 @@ export const patientContact = pgTable(
   ],
 );
 
+export const voiceAgentCallSession = pgTable(
+  "voice_agent_call_session",
+  {
+    id: text("id").primaryKey(),
+    patientId: text("patient_id").references(() => user.id, { onDelete: "set null" }),
+    patientName: text("patient_name").notNull(),
+    contactId: text("contact_id").references(() => patientContact.id, { onDelete: "set null" }),
+    contactName: text("contact_name"),
+    recipientTelegramUserId: text("recipient_telegram_user_id"),
+    direction: text("direction").notNull(),
+    state: text("state").notNull(),
+    thinkProfile: text("think_profile").notNull(),
+    transportMode: text("transport_mode").notNull(),
+    requestId: text("request_id"),
+    summaryText: text("summary_text"),
+    failureReason: text("failure_reason"),
+    latestTranscriptAt: timestamp("latest_transcript_at"),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    endedAt: timestamp("ended_at"),
 export const NECESSITY_REQUEST_STATUSES = ["pending", "acknowledged", "escalated"] as const;
 
 export const patientNecessity = pgTable(
@@ -150,6 +169,9 @@ export const patientNecessity = pgTable(
       .notNull(),
   },
   (table) => [
+    index("voice_agent_call_session_patient_idx").on(table.patientId),
+    index("voice_agent_call_session_contact_idx").on(table.contactId),
+    index("voice_agent_call_session_state_idx").on(table.state),
     index("patient_necessity_patient_sort_idx").on(table.patientId, table.sortOrder),
     index("patient_necessity_patient_active_idx").on(table.patientId, table.isActive),
   ],
@@ -230,6 +252,15 @@ export const patientContactRelations = relations(patientContact, ({ one }) => ({
   }),
 }));
 
+<<<<<<< HEAD
+export const voiceAgentCallSessionRelations = relations(voiceAgentCallSession, ({ one }) => ({
+  patient: one(user, {
+    fields: [voiceAgentCallSession.patientId],
+    references: [user.id],
+  }),
+  contact: one(patientContact, {
+    fields: [voiceAgentCallSession.contactId],
+=======
 export const patientNecessityRelations = relations(patientNecessity, ({ one, many }) => ({
   patient: one(user, {
     fields: [patientNecessity.patientId],
@@ -249,6 +280,7 @@ export const necessityRequestRelations = relations(necessityRequest, ({ one }) =
   }),
   caretakerContact: one(patientContact, {
     fields: [necessityRequest.caretakerContactId],
+>>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
     references: [patientContact.id],
   }),
 }));

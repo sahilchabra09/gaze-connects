@@ -4,10 +4,15 @@ import { createAuthPlugin } from "./lib/middleware";
 import { logger, serializeError } from "./lib/logger";
 import { necessityRoutes } from "./routes/necessity";
 import { gazeRoutes } from "./routes/gaze";
+import { applianceRoutes } from "./routes/appliance";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+<<<<<<< HEAD
+import { voiceAgentRoutes } from "./routes/voice-agent";
+=======
 import { talkRoutes } from "./routes/talk";
 import { necessityService } from "./service/necessity/service";
+>>>>>>> 4f146dd015cd5ed6f9bc12093d9c0b8544c2c62e
 
 /**
  * GazeCore Backend - Main Server
@@ -63,9 +68,11 @@ const app = new Elysia()
     app
       // Better Auth endpoints are mounted by middleware at /api/auth/*
       // User routes: /api/users/me, /api/users/:id
+      .use(applianceRoutes)
       .use(gazeRoutes)
       .use(necessityRoutes)
       .use(telegramRoutes)
+      .use(voiceAgentRoutes)
         .use(talkRoutes)
       .use(userRoutes)
   )
