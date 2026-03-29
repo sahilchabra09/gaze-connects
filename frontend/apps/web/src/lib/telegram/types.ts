@@ -63,7 +63,7 @@ export type TelegramReplyOption = {
   id: string;
   label: string;
   text: string;
-  source: "static" | "ai-dummy";
+  source: "ai-telegram";
 };
 
 export type TelegramOpenChatResponse = {

@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-loadDotenv({ path: resolve(currentDir, ".env") });
+loadDotenv({ path: resolve(currentDir, ".env"), override: true });
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {

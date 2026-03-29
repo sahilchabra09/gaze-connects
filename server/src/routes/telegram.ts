@@ -1,9 +1,9 @@
 import { Elysia, t } from "elysia";
 import { auth } from "@/lib/auth";
 import { logger, serializeError } from "@/lib/logger";
+import { telegramAiReplyService } from "@/service/telegram-message/ai-replies";
 import { contactService } from "@/service/telegram-message/contact-service";
 import { isTelegramDomainError } from "@/service/telegram-message/errors";
-import { STATIC_REPLY_OPTIONS } from "@/service/telegram-message/reply-options";
 import { telegramSchemas } from "@/service/telegram-message/schemas";
 import { telegramSseBroker } from "@/service/telegram-message/sse-broker";
 import { telegramClientManager } from "@/service/telegram-message/tdlib";
@@ -389,8 +389,7 @@ export const telegramRoutes = new Elysia({
       }
 
       try {
-        await contactService.getActiveByChatId(user.id, params.chatId);
-        return STATIC_REPLY_OPTIONS;
+        return await telegramAiReplyService.list(user.id, params.chatId);
       } catch (error) {
         return handleTelegramError(set, error);
       }

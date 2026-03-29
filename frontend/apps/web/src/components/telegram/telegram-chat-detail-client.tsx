@@ -8,13 +8,11 @@ import {
   MessageSquare,
   RefreshCcw,
   Send,
-  Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useTelegramEvents } from "@/hooks/use-telegram-events";
 import { telegramClient } from "@/lib/telegram/client";
-import { buildDummyAiReplyOptions } from "@/lib/telegram/dummy-ai";
 import type {
   TelegramAuthStatus,
   TelegramChat,
@@ -34,10 +32,6 @@ type TelegramChatDetailClientProps = {
   initialReplyOptions: TelegramReplyOption[];
   initialError: { status: number; code: string; message: string } | null;
 };
-
-type ReplyCard =
-  | { kind: "reply"; option: TelegramReplyOption }
-  | { kind: "more" };
 
 const HISTORY_MESSAGES_PER_PAGE = 3;
 
@@ -66,52 +60,6 @@ function formatTimestamp(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function getReplyCards(
-  staticReplyOptions: TelegramReplyOption[],
-  aiReplyOptions: TelegramReplyOption[],
-  staticPage: number,
-): ReplyCard[] {
-  const pageStart = staticPage * 3;
-  const staticSlice = staticReplyOptions.slice(pageStart, pageStart + 3);
-  const cards: ReplyCard[] = [];
-
-  if (aiReplyOptions[0]) {
-    cards.push({ kind: "reply", option: aiReplyOptions[0] });
-  }
-
-  if (aiReplyOptions[1]) {
-    cards.push({ kind: "reply", option: aiReplyOptions[1] });
-  }
-
-  if (pageStart + 2 < staticReplyOptions.length) {
-    cards.push({ kind: "more" });
-  } else if (aiReplyOptions[2]) {
-    cards.push({ kind: "reply", option: aiReplyOptions[2] });
-  } else if (staticSlice[2]) {
-    cards.push({ kind: "reply", option: staticSlice[2] });
-  }
-
-  while (cards.length < 3) {
-    const fallback = staticSlice[cards.length];
-
-    if (fallback) {
-      cards.push({ kind: "reply", option: fallback });
-    } else {
-      cards.push({
-        kind: "reply",
-        option: {
-          id: `empty-${cards.length}`,
-          label: "No Reply",
-          text: "No reply option in this slot.",
-          source: "static",
-        },
-      });
-    }
-  }
-
-  return cards.slice(0, 3);
 }
 
 function ChatPreviewCard({
@@ -267,21 +215,70 @@ export function TelegramChatDetailClient({
   const [messages, setMessages] = useState<TelegramMessage[]>(
     initialOpenChat ? sortMessagesDescending(initialOpenChat.messages) : [],
   );
-  const [staticReplyOptions] = useState(initialReplyOptions);
-  const [aiReplyOptions, setAiReplyOptions] = useState<TelegramReplyOption[]>(
-    buildDummyAiReplyOptions(initialOpenChat?.messages ?? [], initialReplyOptions),
-  );
-  const [staticReplyPage, setStaticReplyPage] = useState(0);
+  const [aiReplyOptions, setAiReplyOptions] = useState<TelegramReplyOption[]>(initialReplyOptions.slice(0, 3));
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyPage, setHistoryPage] = useState(0);
   const [busyReplyId, setBusyReplyId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState(initialError?.message ?? "");
+  const latestReplyRequestId = useRef(0);
+
+  async function refreshReplyOptions(options?: {
+    chatId?: string;
+    showRetrySpinner?: boolean;
+    successNotice?: string;
+  }) {
+    const targetChatId = options?.chatId ?? chat?.chatId;
+
+    if (!targetChatId) {
+      return;
+    }
+
+    const requestId = latestReplyRequestId.current + 1;
+    latestReplyRequestId.current = requestId;
+
+    if (options?.showRetrySpinner) {
+      setRetrying(true);
+    }
+
+    try {
+      const nextReplyOptions = await telegramClient.getReplyOptions(targetChatId);
+
+      if (requestId !== latestReplyRequestId.current) {
+        return;
+      }
+
+      setAiReplyOptions(nextReplyOptions.slice(0, 3));
+      setError("");
+
+      if (options?.successNotice) {
+        setNotice(options.successNotice);
+      }
+    } catch (requestError) {
+      if (requestId !== latestReplyRequestId.current) {
+        return;
+      }
+
+      setError(isTelegramRequestError(requestError) ? requestError.message : "AI replies could not be refreshed.");
+    } finally {
+      if (options?.showRetrySpinner) {
+        setRetrying(false);
+      }
+    }
+  }
 
   const connectionState = useTelegramEvents({
     ready: (nextStatus) => setAuthStatus(nextStatus),
     auth_state: (nextStatus) => setAuthStatus(nextStatus),
+    chat_opened: (event) => {
+      if (event.contact.id !== contact?.id) {
+        return;
+      }
+
+      setContact(event.contact);
+      setChat(event.chat);
+    },
     contact_updated: (event) => {
       if (event.contact && event.contact.id === contact?.id) {
         setContact(event.contact);
@@ -297,11 +294,8 @@ export function TelegramChatDetailClient({
       }
 
       setChat(event.chat);
-      setMessages((previous) => {
-        const nextMessages = mergeMessages(previous, [event.message]);
-        setAiReplyOptions(buildDummyAiReplyOptions(nextMessages.slice(0, 20), staticReplyOptions));
-        return nextMessages;
-      });
+      setMessages((previous) => mergeMessages(previous, [event.message]));
+      void refreshReplyOptions({ chatId: event.chatId });
     },
     message_sent: (event) => {
       if (event.chatId !== chat?.chatId) {
@@ -315,11 +309,8 @@ export function TelegramChatDetailClient({
 
   const appAuthRequired = !authStatus && initialError?.status === 401;
   const telegramAuthRequired = initialError?.code === "TELEGRAM_NOT_AUTHENTICATED";
-  const replyCards = useMemo(
-    () => getReplyCards(staticReplyOptions, aiReplyOptions, staticReplyPage),
-    [staticReplyOptions, aiReplyOptions, staticReplyPage],
-  );
   const historyTotalPages = Math.max(1, Math.ceil(messages.length / HISTORY_MESSAGES_PER_PAGE));
+  const replySlots = Array.from({ length: 3 }, (_, index) => aiReplyOptions[index] ?? null);
 
   function openHistoryModal() {
     setHistoryPage(historyTotalPages - 1);
@@ -327,20 +318,15 @@ export function TelegramChatDetailClient({
   }
 
   async function handleRetry() {
-    setRetrying(true);
     setNotice("");
-
-    try {
-      const nextSuggestions = buildDummyAiReplyOptions(messages.slice(0, 20), staticReplyOptions);
-      setAiReplyOptions(nextSuggestions);
-      setNotice("Dummy AI suggestions refreshed from the latest 20 messages.");
-    } finally {
-      setRetrying(false);
-    }
+    await refreshReplyOptions({
+      showRetrySpinner: true,
+      successNotice: "AI suggestions refreshed from the latest 20 Telegram messages.",
+    });
   }
 
   async function handleSendReply(option: TelegramReplyOption) {
-    if (!chat || option.label === "No Reply") {
+    if (!chat) {
       return;
     }
 
@@ -416,45 +402,40 @@ export function TelegramChatDetailClient({
         />
         <TelegramCard
           label="Retry"
-          subtitle="Regenerate dummy AI suggestions from the latest 20 messages."
+          subtitle="Regenerate AI suggestions from the latest 20 Telegram messages."
           icon={retrying ? <LoaderCircle className="size-5 animate-spin" /> : <RefreshCcw className="size-5" />}
           onClick={handleRetry}
           disabled={retrying}
-          meta="Dummy AI"
+          meta="AI replies"
         />
         <ChatPreviewCard messages={messages} onOpen={openHistoryModal} />
 
-        {replyCards.map((card, index) =>
-          card.kind === "more" ? (
+        {replySlots.map((option, index) =>
+          option ? (
             <TelegramCard
-              key={`more-${staticReplyPage}`}
-              label="More Replies"
-              subtitle="Cycle through the remaining hard-coded reply options."
-              icon={<Sparkles className="size-5" />}
-              onClick={() => {
-                const totalPages = Math.max(1, Math.ceil(staticReplyOptions.length / 3));
-                setStaticReplyPage((previous) => (previous + 1) % totalPages);
-              }}
-              meta={`Static page ${staticReplyPage + 1}`}
+              key={option.id}
+              label={option.label}
+              subtitle={option.text}
+              icon={
+                busyReplyId === option.id ? (
+                  <LoaderCircle className="size-5 animate-spin" />
+                ) : (
+                  <Bot className="size-5" />
+                )
+              }
+              onClick={() => void handleSendReply(option)}
+              disabled={busyReplyId !== null}
+              meta={option.source}
+              className="border-cyan-400/25 bg-cyan-400/5"
             />
           ) : (
             <TelegramCard
-              key={card.option.id}
-              label={card.option.label}
-              subtitle={card.option.text}
-              icon={
-                busyReplyId === card.option.id ? (
-                  <LoaderCircle className="size-5 animate-spin" />
-                ) : card.option.source === "ai-dummy" ? (
-                  <Bot className="size-5" />
-                ) : (
-                  <Send className="size-5" />
-                )
-              }
-              onClick={() => void handleSendReply(card.option)}
-              disabled={card.option.label === "No Reply" || busyReplyId !== null}
-              meta={card.option.source}
-              className={index < 2 && card.option.source === "ai-dummy" ? "border-cyan-400/25 bg-cyan-400/5" : undefined}
+              key={`ai-placeholder-${index}`}
+              label="No Reply Yet"
+              subtitle="AI suggestions are unavailable right now. Retry to regenerate them."
+              icon={<Send className="size-5" />}
+              disabled
+              meta="ai-telegram"
             />
           ),
         )}
