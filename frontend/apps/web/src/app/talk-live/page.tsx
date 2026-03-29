@@ -226,7 +226,10 @@ export default function TalkLivePage() {
 			window.speechSynthesis.cancel();
 
 			const utterance = new SpeechSynthesisUtterance(text);
-			utterance.onend = () => setIsSpeaking(false);
+			utterance.onend = () => {
+				setIsSpeaking(false);
+				handleOptionsBack();
+			};
 			utterance.onerror = () => {
 				setIsSpeaking(false);
 				setSpeechError("Unable to play speech right now.");
