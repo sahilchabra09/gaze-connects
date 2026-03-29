@@ -182,6 +182,27 @@ function isTdlibNotFound(error: unknown): boolean {
   return code === 404 || message.includes("404") || message.includes("not found");
 }
 
+function isRecoverableChatLookupError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "").toLowerCase() : "";
+
+  if (isTdlibNotFound(error)) {
+    return true;
+  }
+
+  return (
+    code === 400
+    || message.includes("chat not found")
+    || message.includes("have no chat")
+    || message.includes("have no access")
+    || message.includes("invalid chat")
+  );
+}
+
 function isTdlibWrongDatabaseEncryptionKey(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -690,7 +711,34 @@ export class TelegramClientManager {
           try {
             return await this.fetchChatSummary(runtime, contact, contact.telegramChatId);
           } catch (error) {
-            logger.warn({ error, patientId, contactId: contact.id }, "failed to fetch chat summary");
+            if (isRecoverableChatLookupError(error)) {
+              logger.warn(
+                {
+                  error: serializeError(error),
+                  patientId,
+                  contactId: contact.id,
+                  chatId: contact.telegramChatId,
+                },
+                "stored telegram chat id failed during chat listing; resolving fresh chat mapping",
+              );
+
+              try {
+                const refreshedContact = await this.resolveContactChat(runtime, contact);
+                return await this.fetchChatSummary(runtime, refreshedContact, refreshedContact.telegramChatId!);
+              } catch (retryError) {
+                logger.warn(
+                  {
+                    error: serializeError(retryError),
+                    patientId,
+                    contactId: contact.id,
+                  },
+                  "failed to refresh telegram chat mapping during chat listing",
+                );
+                return null;
+              }
+            }
+
+            logger.warn({ error: serializeError(error), patientId, contactId: contact.id }, "failed to fetch chat summary");
             return null;
           }
         }),
@@ -720,7 +768,7 @@ export class TelegramClientManager {
       chat = await this.fetchChatSummary(runtime, contact, contact.telegramChatId!);
       messages = await this.getMessages(patientId, contact.telegramChatId!, 100);
     } catch (error) {
-      if (!isTdlibNotFound(error)) {
+      if (!isRecoverableChatLookupError(error)) {
         throw error;
       }
 
@@ -834,7 +882,7 @@ export class TelegramClientManager {
         throw mapped;
       }
 
-      if (isTdlibNotFound(error)) {
+      if (isRecoverableChatLookupError(error)) {
         logger.warn(
           {
             patientId,
@@ -866,7 +914,7 @@ export class TelegramClientManager {
             throw retryMapped;
           }
 
-          if (isTdlibNotFound(retryError)) {
+          if (isRecoverableChatLookupError(retryError)) {
             throw new TelegramDomainError(
               "CONTACT_NOT_ON_TELEGRAM",
               404,
