@@ -1,19 +1,18 @@
 import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { createAuthPlugin } from "./lib/middleware";
-import { logger } from "./lib/logger";
+import { logger, serializeError } from "./lib/logger";
 import { necessityRoutes } from "./routes/necessity";
 import { gazeRoutes } from "./routes/gaze";
 import { telegramRoutes } from "./routes/telegram";
 import { userRoutes } from "./routes/user";
+import { talkRoutes } from "./routes/talk";
 import { necessityService } from "./service/necessity/service";
 
 /**
  * GazeCore Backend - Main Server
  * Route-first architecture
  */
-await necessityService.initialize();
-
 const host = process.env.HOST ?? "0.0.0.0"
 const port = Number(process.env.PORT ?? 8000)
 
@@ -67,6 +66,7 @@ const app = new Elysia()
       .use(gazeRoutes)
       .use(necessityRoutes)
       .use(telegramRoutes)
+        .use(talkRoutes)
       .use(userRoutes)
   )
   .listen({
@@ -82,3 +82,12 @@ logger.info(
   },
   "GazeConnect server started"
 )
+
+void necessityService.initialize().catch((error) => {
+  logger.warn(
+    {
+      error: serializeError(error),
+    },
+    "necessity service initialization skipped; server will continue running",
+  );
+})
