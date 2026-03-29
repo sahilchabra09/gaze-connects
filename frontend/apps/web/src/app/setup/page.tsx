@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckCircle2, KeyRound, LoaderCircle } from "lucide-react";
 import { GazeCoreWidget } from "@workspace/ui/components/gaze-core-widget";
@@ -50,7 +50,7 @@ function resolveGazeConnectBackendUrl() {
 	return authBaseURL ?? "";
 }
 
-export default function SetupPage() {
+function SetupPageContent() {
 	const searchParams = useSearchParams();
 	const [activeTab, setActiveTab] = useState<SetupTab>("patient");
 	const { data: session, isPending: sessionPending } = useSession();
@@ -362,5 +362,23 @@ export default function SetupPage() {
 				{content}
 			</div>
 		</main>
+	);
+}
+
+export default function SetupPage() {
+	return (
+		<Suspense
+			fallback={(
+				<main className="min-h-screen bg-black px-4 py-6 text-zinc-100 md:px-8 md:py-8">
+					<div className="mx-auto w-full">
+						<div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-5 text-sm text-zinc-300">
+							Loading setup...
+						</div>
+					</div>
+				</main>
+			)}
+		>
+			<SetupPageContent />
+		</Suspense>
 	);
 }
