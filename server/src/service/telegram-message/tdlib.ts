@@ -314,7 +314,26 @@ export class TelegramClientManager {
 
     const runtime = this.runtimes.get(patientId);
     if (runtime) {
-      return this.serializeRuntime(runtime);
+      try {
+        return await this.refreshRuntimeState(patientId);
+      } catch (error) {
+        const mapped = mapTdlibAuthError(error);
+        if (mapped?.code === "TELEGRAM_AUTH_KEY_DUPLICATED") {
+          await this.markRuntimeExpiredOnAuthKeyDuplication(
+            patientId,
+            runtime.sessionPath,
+            error,
+            "telegram.get-status",
+          );
+          throw mapped;
+        }
+
+        if (mapped) {
+          throw mapped;
+        }
+
+        throw error;
+      }
     }
 
     const existing = await db

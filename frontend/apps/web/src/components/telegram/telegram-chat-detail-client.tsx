@@ -9,7 +9,7 @@ import {
   RefreshCcw,
   Send,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTelegramEvents } from "@/hooks/use-telegram-events";
 import { telegramClient } from "@/lib/telegram/client";
@@ -27,6 +27,7 @@ import { TelegramCard, TelegramGrid } from "./telegram-grid";
 import { TelegramShell } from "./telegram-shell";
 
 type TelegramChatDetailClientProps = {
+  contactId: string;
   initialAuthStatus: TelegramAuthStatus | null;
   initialOpenChat: TelegramOpenChatResponse | null;
   initialReplyOptions: TelegramReplyOption[];
@@ -204,6 +205,7 @@ function HistoryModal({
 }
 
 export function TelegramChatDetailClient({
+  contactId,
   initialAuthStatus,
   initialOpenChat,
   initialReplyOptions,
@@ -220,6 +222,7 @@ export function TelegramChatDetailClient({
   const [historyPage, setHistoryPage] = useState(0);
   const [busyReplyId, setBusyReplyId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [openingChat, setOpeningChat] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState(initialError?.message ?? "");
   const latestReplyRequestId = useRef(0);
@@ -312,6 +315,63 @@ export function TelegramChatDetailClient({
   const historyTotalPages = Math.max(1, Math.ceil(messages.length / HISTORY_MESSAGES_PER_PAGE));
   const replySlots = Array.from({ length: 3 }, (_, index) => aiReplyOptions[index] ?? null);
 
+  useEffect(() => {
+    if (appAuthRequired || contact || chat || openingChat) {
+      return;
+    }
+
+    if (authStatus?.authState !== "authenticated") {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function recoverChat() {
+      setOpeningChat(true);
+      setError("");
+
+      try {
+        const openChat = await telegramClient.openChat(contactId);
+        if (cancelled) {
+          return;
+        }
+
+        setContact(openChat.contact);
+        setChat(openChat.chat);
+        setMessages(sortMessagesDescending(openChat.messages));
+
+        const replyOptions = await telegramClient.getReplyOptions(openChat.chat.chatId);
+        if (cancelled) {
+          return;
+        }
+
+        setAiReplyOptions(replyOptions.slice(0, 3));
+        setNotice("");
+        setError("");
+      } catch (requestError) {
+        if (cancelled) {
+          return;
+        }
+
+        setError(
+          isTelegramRequestError(requestError)
+            ? requestError.message
+            : "Chat data is unavailable.",
+        );
+      } finally {
+        if (!cancelled) {
+          setOpeningChat(false);
+        }
+      }
+    }
+
+    void recoverChat();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appAuthRequired, authStatus?.authState, chat, contact, contactId, openingChat]);
+
   function openHistoryModal() {
     setHistoryPage(historyTotalPages - 1);
     setHistoryOpen(true);
@@ -357,11 +417,13 @@ export function TelegramChatDetailClient({
     }
   }
 
-  if (appAuthRequired || !chat || !contact) {
+  if (appAuthRequired || (!chat || !contact)) {
     const actionLabel = appAuthRequired ? "Sign In" : "Connect";
     const actionSubtitle = appAuthRequired
       ? "Open the main app auth flow."
-      : "Finish Telegram connect/auth first.";
+      : openingChat
+        ? "Opening this chat now that Telegram is authenticated."
+        : "Finish Telegram connect/auth first.";
     const actionHref = appAuthRequired ? "/auth" : "/messaging/connect";
 
     return (
@@ -372,15 +434,33 @@ export function TelegramChatDetailClient({
       >
         <TelegramGrid>
           <TelegramCard label="Back" subtitle="Return to contacts." icon={<ArrowLeft className="size-5" />} href="/messaging/chats" />
-          <TelegramCard label={actionLabel} subtitle={actionSubtitle} icon={<Bot className="size-5" />} href={actionHref} />
           <TelegramCard
-            label="Connect"
-            subtitle={telegramAuthRequired ? "Telegram authentication is required for this chat." : "Reconnect Telegram if needed."}
-            icon={<RefreshCcw className="size-5" />}
-            href="/messaging/connect"
+            label={openingChat ? "Opening" : actionLabel}
+            subtitle={actionSubtitle}
+            icon={openingChat ? <LoaderCircle className="size-5 animate-spin" /> : <Bot className="size-5" />}
+            href={openingChat ? undefined : actionHref}
+            disabled={openingChat}
+          />
+          <TelegramCard
+            label={openingChat ? "Please Wait" : "Connect"}
+            subtitle={
+              openingChat
+                ? "Telegram is connected. Retrying the approved chat open flow."
+                : telegramAuthRequired
+                  ? "Telegram authentication is required for this chat."
+                  : "Reconnect Telegram if needed."
+            }
+            icon={openingChat ? <LoaderCircle className="size-5 animate-spin" /> : <RefreshCcw className="size-5" />}
+            href={openingChat ? undefined : "/messaging/connect"}
+            disabled={openingChat}
           />
           <TelegramCard label="Contacts" subtitle="Return to the approved contact grid." icon={<MessageSquare className="size-5" />} href="/messaging/chats" />
-          <TelegramCard label="Error" subtitle={initialError?.message ?? "Chat data is unavailable."} icon={<Bot className="size-5" />} tone="danger" />
+          <TelegramCard
+            label={openingChat ? "Retrying" : "Error"}
+            subtitle={error || initialError?.message || "Chat data is unavailable."}
+            icon={openingChat ? <LoaderCircle className="size-5 animate-spin" /> : <Bot className="size-5" />}
+            tone="danger"
+          />
           <TelegramCard label="Messaging Hub" subtitle="Go back to the Telegram hub." icon={<ArrowLeft className="size-5" />} href="/messaging" />
         </TelegramGrid>
       </TelegramShell>

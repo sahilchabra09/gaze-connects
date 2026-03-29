@@ -21,6 +21,7 @@ export default async function MessagingChatDetailPage({ params }: MessagingChatD
 
   return (
     <TelegramChatDetailClient
+      contactId={contactId}
       initialAuthStatus={authResult.data}
       initialOpenChat={openChatResult.data}
       initialReplyOptions={replyOptionsResult.data ?? []}

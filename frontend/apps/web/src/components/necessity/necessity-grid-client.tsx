@@ -85,9 +85,10 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
   const [page, setPage] = useState(0);
   const [activeRequest, setActiveRequest] = useState<ActiveRequestState | null>(null);
   const [busyNecessityId, setBusyNecessityId] = useState<string | null>(null);
-  const [error, setError] = useState(initialError?.message ?? "");
+  const [error, setError] = useState(initialError?.status === 401 ? "" : (initialError?.message ?? ""));
   const [message, setMessage] = useState("");
   const [appAuthRequired, setAppAuthRequired] = useState(initialError?.status === 401);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(necessities.length / NECESSITIES_PER_PAGE));
   const currentPage = Math.min(page, totalPages - 1);
@@ -148,12 +149,17 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
       setAppAuthRequired(true);
       setError("Sign in required");
       setMessage("");
+      setIsRefreshing(false);
       return;
     }
 
     let cancelled = false;
 
     async function refreshNecessities() {
+      setAppAuthRequired(false);
+      setError("");
+      setIsRefreshing(true);
+
       try {
         const nextNecessities = await necessityClient.listActive();
         if (cancelled) {
@@ -177,6 +183,10 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
             ? requestError.message
             : "Could not load necessities.",
         );
+      } finally {
+        if (!cancelled) {
+          setIsRefreshing(false);
+        }
       }
     }
 
@@ -234,6 +244,23 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
                   Sign in to load necessities
                 </span>
               </div>
+            </>
+          ) : isRefreshing && necessities.length === 0 ? (
+            <>
+              <div className={cardClassName(true)}>
+                <LoaderCircle className="size-9 animate-spin text-zinc-100/95" />
+                <span className="text-2xl font-medium tracking-tight text-zinc-100/95 md:text-3xl">
+                  Loading necessities
+                </span>
+              </div>
+              {Array.from({ length: NECESSITIES_PER_PAGE - 1 }).map((_, index) => (
+                <div key={`loading-${index}`} className={cardClassName(true)}>
+                  <LoaderCircle className="size-9 animate-spin text-zinc-100/40" />
+                  <span className="text-3xl font-medium tracking-tight text-zinc-100/40 md:text-4xl">
+                    Loading
+                  </span>
+                </div>
+              ))}
             </>
           ) : (
             <>
