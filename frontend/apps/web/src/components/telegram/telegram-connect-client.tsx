@@ -44,7 +44,7 @@ export function TelegramConnectClient({
 
   const appAuthRequired = !authStatus && initialError?.status === 401;
   const canSubmitPhone = !busy && phoneNumber.trim().length >= 8;
-  const canSubmitCode = !busy && code.trim().length >= 1;
+  const canSubmitCode = !busy && code.trim().length >= 1 && authStatus?.authState === "waiting_code";
 
   async function handleStartAuth() {
     if (!canSubmitPhone) {
@@ -58,7 +58,13 @@ export function TelegramConnectClient({
     try {
       const nextStatus = await telegramClient.startAuth(phoneNumber.trim());
       setAuthStatus(nextStatus);
-      setMessage("Phone number accepted. Enter the Telegram verification code.");
+      setMessage(
+        nextStatus.authState === "waiting_code"
+          ? "Phone number accepted. Enter the Telegram verification code."
+          : nextStatus.authState === "authenticated"
+            ? "Telegram is already connected. No verification code was requested."
+            : `Telegram auth state: ${nextStatus.authState}.`,
+      );
     } catch (requestError) {
       setError(
         isTelegramRequestError(requestError) ? requestError.message : "Telegram auth could not be started.",

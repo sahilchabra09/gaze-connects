@@ -224,6 +224,28 @@ function mapTdlibAuthError(error: unknown): TelegramDomainError | null {
     return new TelegramDomainError("TELEGRAM_PHONE_INVALID", 400, "Telegram phone number is invalid");
   }
 
+  if (
+    message.includes("Call to setAuthenticationPhoneNumber unexpected") ||
+    message.includes("setAuthenticationPhoneNumber unexpected")
+  ) {
+    return new TelegramDomainError(
+      "TELEGRAM_AUTH_ALREADY_IN_PROGRESS",
+      409,
+      "Telegram authentication is already in progress. Enter the verification code or refresh auth status.",
+    );
+  }
+
+  if (
+    message.includes("Call to checkAuthenticationCode unexpected") ||
+    message.includes("checkAuthenticationCode unexpected")
+  ) {
+    return new TelegramDomainError(
+      "TELEGRAM_CODE_NOT_REQUESTED",
+      409,
+      "Telegram is not waiting for a verification code. Refresh auth status before entering a code.",
+    );
+  }
+
   if (message.includes("PHONE_NUMBER_FLOOD") || message.includes("FLOOD_WAIT") || code === 429) {
     return new TelegramDomainError("TELEGRAM_RATE_LIMIT", 429, "Too many Telegram attempts. Please try again later");
   }
@@ -358,12 +380,25 @@ export class TelegramClientManager {
     const runtime = await this.ensureRuntime(patientId);
     const normalizedPhoneNumber = toTelegramPhoneNumber(phoneNumber);
 
+    const statusBefore = await this.refreshRuntimeState(patientId);
+    if (statusBefore.authState === "authenticated" || statusBefore.authState === "waiting_code") {
+      return statusBefore;
+    }
+
+    if (statusBefore.authState === "waiting_password") {
+      throw new TelegramDomainError(
+        "TELEGRAM_2FA_UNSUPPORTED",
+        409,
+        "Telegram accounts with 2-step password are not supported in this version",
+      );
+    }
+
     logger.info(
       {
         operation: "telegram.start-auth",
         patientId,
         sessionPath: runtime.sessionPath,
-        authStateBefore: runtime.authState,
+        authStateBefore: statusBefore.authState,
         phoneNumber: maskPhoneNumber(normalizedPhoneNumber),
       },
       "starting telegram phone authentication",
@@ -545,13 +580,30 @@ export class TelegramClientManager {
   async verifyCode(patientId: string, code: string): Promise<TelegramRuntimeStatus> {
     this.authKeyDuplicatedPatients.delete(patientId);
     const runtime = await this.ensureRuntime(patientId);
+    const statusBefore = await this.refreshRuntimeState(patientId);
+
+    if (statusBefore.authState === "authenticated") {
+      throw new TelegramDomainError(
+        "TELEGRAM_ALREADY_CONNECTED",
+        409,
+        "Telegram is already connected. No verification code is required.",
+      );
+    }
+
+    if (statusBefore.authState !== "waiting_code") {
+      throw new TelegramDomainError(
+        "TELEGRAM_CODE_NOT_REQUESTED",
+        409,
+        "Telegram is not waiting for a verification code. Start auth and wait for the code step first.",
+      );
+    }
 
     logger.info(
       {
         operation: "telegram.verify-code",
         patientId,
         sessionPath: runtime.sessionPath,
-        authStateBefore: runtime.authState,
+        authStateBefore: statusBefore.authState,
         codeLength: code.length,
       },
       "verifying telegram authentication code",
@@ -583,7 +635,7 @@ export class TelegramClientManager {
           operation: "telegram.verify-code",
           patientId,
           sessionPath: runtime.sessionPath,
-          authStateBefore: runtime.authState,
+          authStateBefore: statusBefore.authState,
           codeLength: code.length,
           error: serializeError(error),
         },
