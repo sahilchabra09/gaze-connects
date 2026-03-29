@@ -11,6 +11,19 @@ function readStringEnv(name: string, fallback: string) {
   return value ? value : fallback
 }
 
+function readOptionalStringEnv(name: string) {
+  const value = process.env[name]?.trim()
+  return value || ""
+}
+
+function readForwardedHeader(headers: Headers, name: string) {
+  const value = headers.get(name)?.trim()
+  if (!value) return ""
+
+  const firstValue = value.split(",")[0]?.trim()
+  return firstValue || ""
+}
+
 const mqttHost = readStringEnv("GAZECORE_MQTT_BROKER_HOST", "broker.hivemq.com")
 const mqttPort = readNumberEnv("GAZECORE_MQTT_BROKER_PORT", 1883)
 
@@ -32,6 +45,7 @@ export const gazeConfig = {
   gyroPitchMultiplier: readNumberEnv("GAZECORE_GYRO_PITCH_MULTIPLIER", 0.55),
   gyroRollMultiplier: readNumberEnv("GAZECORE_GYRO_ROLL_MULTIPLIER", 0.08),
   websocketPath: "/api/gaze/screen/ws",
+  publicBaseUrl: readOptionalStringEnv("GAZECORE_PUBLIC_BASE_URL"),
 } as const
 
 export function buildGyroTopic(uuid: string) {
@@ -44,8 +58,25 @@ export function buildGyroTopic(uuid: string) {
 }
 
 export function buildWebSocketUrlFromRequest(request: Request) {
-  const url = new URL(request.url)
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+  const publicBaseUrl = gazeConfig.publicBaseUrl.replace(/\/+$/g, "")
+  const url = publicBaseUrl ? new URL(publicBaseUrl) : new URL(request.url)
+  const forwardedProto = readForwardedHeader(request.headers, "x-forwarded-proto")
+  const forwardedHost = readForwardedHeader(request.headers, "x-forwarded-host")
+  const forwardedPort = readForwardedHeader(request.headers, "x-forwarded-port")
+
+  if (!publicBaseUrl && forwardedHost) {
+    url.host = forwardedHost
+  }
+
+  if (!publicBaseUrl && forwardedPort && !url.host.includes(":")) {
+    url.host = `${url.hostname}:${forwardedPort}`
+  }
+
+  const protocolSource = publicBaseUrl
+    ? url.protocol
+    : (forwardedProto ? `${forwardedProto.replace(/:$/, "")}:` : url.protocol)
+
+  url.protocol = protocolSource === "https:" ? "wss:" : "ws:"
   url.pathname = gazeConfig.websocketPath
   url.search = ""
   url.hash = ""
