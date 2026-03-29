@@ -1,0 +1,11 @@
+node_modules
+.turbo
+.git
+.DS_Store
+.env
+.env.*
+apps/*/node_modules
+apps/*/.next
+apps/*/dist
+packages/*/node_modules
+packages/*/dist
