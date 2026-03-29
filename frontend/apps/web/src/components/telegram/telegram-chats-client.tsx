@@ -1,16 +1,20 @@
 "use client";
 
 import { ArrowLeft, ArrowRight, MessageSquareMore, Radio, UserRound } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { useSession } from "@/lib/auth-client";
 import { useTelegramEvents } from "@/hooks/use-telegram-events";
+import { telegramClient } from "@/lib/telegram/client";
 import type {
   TelegramAuthStatus,
   TelegramChat,
   TelegramContact,
   TelegramContactUpdatedEventData,
+  TelegramErrorDescriptor,
   TelegramMessageEventData,
 } from "@/lib/telegram/types";
+import { isTelegramRequestError } from "@/lib/telegram/types";
 
 import { TelegramCard, TelegramGrid } from "./telegram-grid";
 import { TelegramShell } from "./telegram-shell";
@@ -83,9 +87,12 @@ export function TelegramChatsClient({
   firstPageBackHref = "/messaging",
   firstPageBackSubtitle = "Return to messaging hub.",
 }: TelegramChatsClientProps) {
+  const { data: session, isPending: sessionPending } = useSession();
   const [authStatus, setAuthStatus] = useState(initialAuthStatus);
   const [contacts, setContacts] = useState(initialContacts);
   const [chats, setChats] = useState(initialChats);
+  const [error, setError] = useState<TelegramErrorDescriptor | null>(initialError);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const connectionState = useTelegramEvents({
     ready: (nextStatus) => setAuthStatus(nextStatus),
@@ -95,7 +102,92 @@ export function TelegramChatsClient({
     message_sent: (event) => setChats((previous) => applyChatEvent(previous, event)),
   });
 
-  const appAuthRequired = !authStatus && initialError?.status === 401;
+  useEffect(() => {
+    if (sessionPending) {
+      return;
+    }
+
+    if (!session?.user?.id) {
+      setAuthStatus(null);
+      setContacts([]);
+      setChats([]);
+      setError({
+        status: 401,
+        code: "UNAUTHORIZED",
+        message: "Sign in required",
+      });
+      setIsRefreshing(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshTelegramState() {
+      setIsRefreshing(true);
+
+      try {
+        const nextAuthStatus = await telegramClient.getAuthStatus();
+        if (cancelled) {
+          return;
+        }
+
+        setAuthStatus(nextAuthStatus);
+
+        const nextContacts = await telegramClient.listContacts();
+        if (cancelled) {
+          return;
+        }
+
+        setContacts(nextContacts);
+
+        if (nextAuthStatus.authState === "authenticated") {
+          const nextChats = await telegramClient.listChats();
+          if (cancelled) {
+            return;
+          }
+
+          setChats(nextChats);
+        } else {
+          setChats([]);
+        }
+
+        setError(null);
+      } catch (requestError) {
+        if (cancelled) {
+          return;
+        }
+
+        setAuthStatus(null);
+        setContacts([]);
+        setChats([]);
+        setError(
+          isTelegramRequestError(requestError)
+            ? {
+                status: requestError.status,
+                code: requestError.code,
+                message: requestError.message,
+              }
+            : {
+                status: 500,
+                code: "TELEGRAM_CLIENT_REFRESH_FAILED",
+                message: "Could not refresh Telegram data.",
+              },
+        );
+      } finally {
+        if (!cancelled) {
+          setIsRefreshing(false);
+        }
+      }
+    }
+
+    void refreshTelegramState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, sessionPending]);
+
+  const appAuthRequired = !sessionPending && !session?.user?.id && error?.status === 401;
   const chatMap = useMemo(() => new Map(chats.map((chat) => [chat.contactId, chat])), [chats]);
   const sortedContacts = useMemo(() => sortContacts(contacts, chatMap), [contacts, chatMap]);
   const totalPages = Math.max(1, Math.ceil(sortedContacts.length / CONTACTS_PER_PAGE));
@@ -103,6 +195,7 @@ export function TelegramChatsClient({
   const startIndex = (currentPage - 1) * CONTACTS_PER_PAGE;
   const visibleContacts = sortedContacts.slice(startIndex, startIndex + CONTACTS_PER_PAGE);
   const emptySlots = Math.max(0, CONTACTS_PER_PAGE - visibleContacts.length);
+  const noApprovedContacts = !appAuthRequired && sortedContacts.length === 0;
 
   if (appAuthRequired) {
     return (
@@ -116,8 +209,69 @@ export function TelegramChatsClient({
           <TelegramCard label="Sign In" subtitle="Open the app auth screen first." icon={<UserRound className="size-5" />} href="/auth" />
           <TelegramCard label="Connect" subtitle="Once signed in, complete Telegram auth." icon={<MessageSquareMore className="size-5" />} href="/messaging/connect" disabled />
           <TelegramCard label="Contacts" subtitle="Contacts unlock after sign-in." icon={<UserRound className="size-5" />} href="/messaging/contacts" disabled />
-          <TelegramCard label="Live State" subtitle={initialError.message} icon={<Radio className="size-5" />} meta={connectionState} />
+          <TelegramCard label="Live State" subtitle={error?.message ?? "Sign in required"} icon={<Radio className="size-5" />} meta={connectionState} />
           <TelegramCard label="Setup" subtitle="Return to setup for patient details if needed." icon={<ArrowRight className="size-5" />} href="/setup" />
+        </TelegramGrid>
+      </TelegramShell>
+    );
+  }
+
+  if (noApprovedContacts) {
+    return (
+      <TelegramShell
+        title="Approved Contacts"
+        subtitle="Telegram is connected, but this grid only shows active approved contacts. Add or activate contacts first, then their chats will appear here."
+        connectionState={connectionState}
+      >
+        <TelegramGrid>
+          <TelegramCard
+            label="Back"
+            subtitle={firstPageBackSubtitle}
+            icon={<ArrowLeft className="size-5" />}
+            href={firstPageBackHref}
+            meta="Hub"
+          />
+          <TelegramCard
+            label="Contacts"
+            subtitle="Create or activate the approved contact list for this patient."
+            icon={<UserRound className="size-5" />}
+            href="/messaging/contacts"
+          />
+          <TelegramCard
+            label="Setup"
+            subtitle="Review the Telegram setup flow and patient details."
+            icon={<ArrowRight className="size-5" />}
+            href="/setup?tab=telegram"
+          />
+          <TelegramCard
+            label={authStatus?.authState === "authenticated" ? "Reconnect" : "Connect"}
+            subtitle={
+              authStatus?.authState === "authenticated"
+                ? "Telegram is connected. Reopen setup only if you need to reconnect it."
+                : "Finish Telegram authentication before opening chats."
+            }
+            icon={<MessageSquareMore className="size-5" />}
+            href="/messaging/connect"
+          />
+          <TelegramCard
+            label="Telegram Status"
+            subtitle={
+              isRefreshing
+                ? "Refreshing Telegram state..."
+                : authStatus?.authState === "authenticated"
+                  ? "Telegram is connected. No approved contacts are ready yet."
+                  : error?.message ?? "Telegram status will update here."
+            }
+            icon={<Radio className="size-5" />}
+            meta={authStatus?.authState?.replaceAll("_", " ") ?? connectionState}
+          />
+          <TelegramCard
+            label="Next"
+            subtitle="More chats appear automatically after contacts are added."
+            icon={<ArrowRight className="size-5" />}
+            disabled
+            meta="Page 1 of 1"
+          />
         </TelegramGrid>
       </TelegramShell>
     );

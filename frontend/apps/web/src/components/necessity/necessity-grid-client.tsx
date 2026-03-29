@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { TelegramShell } from "@/components/telegram/telegram-shell";
 import { useTelegramEvents } from "@/hooks/use-telegram-events";
+import { useSession } from "@/lib/auth-client";
 import { necessityClient } from "@/lib/necessity/client";
 import type {
   Necessity,
@@ -79,12 +80,14 @@ function BackCard() {
 }
 
 export function NecessityGridClient({ initialNecessities, initialError }: NecessityGridClientProps) {
-  const [necessities] = useState(initialNecessities);
+  const { data: session, isPending: sessionPending } = useSession();
+  const [necessities, setNecessities] = useState(initialNecessities);
   const [page, setPage] = useState(0);
   const [activeRequest, setActiveRequest] = useState<ActiveRequestState | null>(null);
   const [busyNecessityId, setBusyNecessityId] = useState<string | null>(null);
   const [error, setError] = useState(initialError?.message ?? "");
   const [message, setMessage] = useState("");
+  const [appAuthRequired, setAppAuthRequired] = useState(initialError?.status === 401);
 
   const totalPages = Math.max(1, Math.ceil(necessities.length / NECESSITIES_PER_PAGE));
   const currentPage = Math.min(page, totalPages - 1);
@@ -135,6 +138,55 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
     };
   }, [activeRequest]);
 
+  useEffect(() => {
+    if (sessionPending) {
+      return;
+    }
+
+    if (!session?.user?.id) {
+      setNecessities([]);
+      setAppAuthRequired(true);
+      setError("Sign in required");
+      setMessage("");
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshNecessities() {
+      try {
+        const nextNecessities = await necessityClient.listActive();
+        if (cancelled) {
+          return;
+        }
+
+        setNecessities(nextNecessities);
+        setAppAuthRequired(false);
+        setError("");
+      } catch (requestError) {
+        if (cancelled) {
+          return;
+        }
+
+        setNecessities([]);
+        setAppAuthRequired(
+          isNecessityRequestError(requestError) && requestError.status === 401,
+        );
+        setError(
+          isNecessityRequestError(requestError)
+            ? requestError.message
+            : "Could not load necessities.",
+        );
+      }
+    }
+
+    void refreshNecessities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, sessionPending]);
+
   async function handleTrigger(necessity: Necessity) {
     setBusyNecessityId(necessity.id);
     setError("");
@@ -158,7 +210,6 @@ export function NecessityGridClient({ initialNecessities, initialError }: Necess
     }
   }
 
-  const appAuthRequired = initialError?.status === 401;
   const cardsDisabled = Boolean(activeRequest && activeRequest.status === "pending");
 
   return (
